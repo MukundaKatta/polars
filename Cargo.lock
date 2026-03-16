@@ -3561,7 +3561,7 @@ dependencies = [
 
 [[package]]
 name = "polars-runtime-64"
-version = "1.39.0"
+version = "1.39.1"
 dependencies = [
  "either",
  "libc",
@@ -3572,7 +3572,7 @@ dependencies = [
 
 [[package]]
 name = "polars-runtime-compat"
-version = "1.39.0"
+version = "1.39.1"
 dependencies = [
  "either",
  "libc",
