@@ -1,4 +1,4 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use num_traits::AsPrimitive;
 use parking_lot::Mutex;
@@ -822,7 +822,6 @@ fn to_graph_rec<'a>(
                     n_readers_pre_init: RelaxedCell::new_usize(0),
                     max_concurrent_scans: RelaxedCell::new_usize(0),
                     disable_morsel_split,
-                    io_metrics: OnceLock::default(),
                     verbose,
                 })),
                 [],
@@ -1493,7 +1492,6 @@ fn to_graph_rec<'a>(
                     n_readers_pre_init: RelaxedCell::new_usize(0),
                     max_concurrent_scans: RelaxedCell::new_usize(0),
                     disable_morsel_split,
-                    io_metrics: OnceLock::default(),
                     verbose,
                 })),
                 [],
