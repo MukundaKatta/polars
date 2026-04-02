@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(all(feature = "strings", feature = "concat_str"))]
 use crate::plans::IRStringFunction;
 use crate::plans::ir_traversal::edge_provider::EdgesProvider;
-use crate::plans::ir_traversal::pullup_traversal::BasicEdgeProvider;
+use crate::plans::ir_traversal::ir_node_key::IRNodeKey;
+use crate::plans::ir_traversal::pullup_traversal::{BasicEdgeProvider, ir_pullup_traversal_rec};
 use crate::plans::partitioning::frame::FramePartitioning;
 use crate::plans::{
     AExpr, ExprIR, FunctionIR, HintIR, IR, IRFunctionExpr, Sorted, ToFieldContext,
@@ -24,34 +25,42 @@ use crate::plans::{
 
 /// Container for sortedness state at each stage in an IR plan.
 #[derive(Debug)]
-pub struct IRPlanSorted(PlHashMap<Node, IRSorted>);
+pub struct IRPlanSorted(PlHashMap<IRNodeKey, FramePartitioning>);
 
 impl IRPlanSorted {
     pub fn resolve(root: Node, ir_arena: &Arena<IR>, expr_arena: &Arena<AExpr>) -> Self {
-        let mut seen = PlHashSet::default();
-        let mut sortedness = PlHashMap::default();
-        let mut cache_proxy = PlHashMap::default();
-        let mut amort_passed_columns = PlHashSet::default();
-        is_sorted_rec(
+        let mut cache = PlHashMap::default();
+        let mut column_names_map = ScratchMap::default();
+
+        ir_pullup_traversal_rec(
             root,
+            &mut |current_ir_node, ir_arena, expr_arena, edge_provider| {
+                pullup_sorted_single(
+                    current_ir_node,
+                    ir_arena,
+                    expr_arena,
+                    edge_provider,
+                    &mut column_names_map,
+                );
+                Ok(())
+            },
             ir_arena,
             expr_arena,
-            &mut seen,
-            &mut sortedness,
-            &mut cache_proxy,
-            &mut amort_passed_columns,
-            true,
-        );
-        Self(sortedness)
+            &mut cache,
+            false,
+        )
+        .unwrap();
+
+        Self(cache)
     }
 
-    pub fn get(&self, node: Node) -> Option<&IRSorted> {
-        self.0.get(&node)
+    pub fn get(&self, node_key: &IRNodeKey) -> &FramePartitioning {
+        self.0.get(node_key).unwrap()
     }
 
     pub fn is_expr_sorted(
         &self,
-        at: Node,
+        at: &IRNodeKey,
         expr: &ExprIR,
         expr_arena: &Arena<AExpr>,
         input_schema: &Schema,
@@ -61,7 +70,7 @@ impl IRPlanSorted {
 
     pub fn are_keys_sorted_any(
         &self,
-        at: Node,
+        at: &IRNodeKey,
         keys: &[ExprIR],
         expr_arena: &Arena<AExpr>,
         input_schema: &Schema,
@@ -136,7 +145,7 @@ pub struct IRSorted(pub Arc<[Sorted]>);
 ///
 /// Returns the way in which the keys are sorted, if they are sorted.
 pub fn are_keys_sorted_any(
-    ir_sorted: Option<&IRSorted>,
+    ir_sorted: &FramePartitioning,
     keys: &[ExprIR],
     expr_arena: &Arena<AExpr>,
     input_schema: &Schema,
@@ -147,7 +156,7 @@ pub fn are_keys_sorted_any(
             expr_arena.get(key.node()),
             expr_arena,
             input_schema,
-            Some(&ir_sorted?.0[idx..]),
+            ir_sorted,
         )?;
         sortedness.push(s);
     }
@@ -158,7 +167,7 @@ pub fn are_keys_sorted_any(
 ///
 /// Returns the way in which the expression is sorted, if it is sorted.
 pub fn expr_is_sorted(
-    ir_sorted: Option<&IRSorted>,
+    ir_sorted: &FramePartitioning,
     expr: &ExprIR,
     expr_arena: &Arena<AExpr>,
     input_schema: &Schema,
@@ -167,29 +176,35 @@ pub fn expr_is_sorted(
         expr_arena.get(expr.node()),
         expr_arena,
         input_schema,
-        ir_sorted.map(|s| s.0.as_ref()),
+        ir_sorted,
     )
 }
 
-pub fn is_sorted(root: Node, ir_arena: &Arena<IR>, expr_arena: &Arena<AExpr>) -> Option<IRSorted> {
-    let mut seen = PlHashSet::default();
-    let mut sortedness = PlHashMap::default();
-    let mut cache_proxy = PlHashMap::default();
-    let mut amort_passed_columns = PlHashSet::default();
+pub fn is_sorted(root: Node, ir_arena: &Arena<IR>, expr_arena: &Arena<AExpr>) -> FramePartitioning {
+    let mut cache = PlHashMap::default();
+    let mut column_names_map = ScratchMap::default();
 
-    is_sorted_rec(
+    ir_pullup_traversal_rec(
         root,
+        &mut |current_ir_node, ir_arena, expr_arena, edge_provider| {
+            pullup_sorted_single(
+                current_ir_node,
+                ir_arena,
+                expr_arena,
+                edge_provider,
+                &mut column_names_map,
+            );
+            Ok(())
+        },
         ir_arena,
         expr_arena,
-        &mut seen,
-        &mut sortedness,
-        &mut cache_proxy,
-        &mut amort_passed_columns,
+        &mut cache,
         false,
     )
+    .unwrap()
 }
 
-pub fn is_sorted_pullup_single(
+pub fn pullup_sorted_single(
     current_ir_node: Node,
     ir_arena: &Arena<IR>,
     expr_arena: &Arena<AExpr>,
@@ -216,7 +231,7 @@ pub fn is_sorted_pullup_single(
         IR::Scan { .. } => {},
 
         IR::DataFrameScan { df, .. } => {
-            let ([], [out_edge]) = unpack_edges!(2);
+            let ([], [out_edge]) = unpack_edges!(1);
 
             let sorted_cols = df
                 .columns()
@@ -261,7 +276,8 @@ pub fn is_sorted_pullup_single(
                 }
             }
 
-            let ([mut partitioning], [out_edge]) = unpack_edges!(2);
+            let ([input_partitioning], [out_edge]) = unpack_edges!(2);
+            let mut partitioning = input_partitioning.clone();
 
             for eir in exprs.iter() {
                 match expr_arena.get(eir.node()) {
@@ -300,7 +316,7 @@ pub fn is_sorted_pullup_single(
                     exprs,
                     expr_arena,
                     &ir_arena.get(*input).schema(ir_arena),
-                    None,
+                    &input_partitioning,
                 )
             {
                 partitioning = FramePartitioning::from_iter(vec![sorted])
@@ -375,11 +391,11 @@ pub fn is_sorted_pullup_single(
 
             #[cfg(feature = "dynamic_group_by")]
             if let Some(dynamic_options) = &options.dynamic {
-                *out_edge = FramePartitioning::from_iter([Sorted {
+                *out_edge = FramePartitioning::from_iter(Some(Sorted {
                     column: dynamic_options.index_column.clone(),
                     descending: None,
                     nulls_last: None,
-                }]);
+                }));
 
                 return;
             };
@@ -407,327 +423,90 @@ pub fn is_sorted_pullup_single(
             }));
         },
 
-        _ => todo!(),
-    }
-}
+        // TODO: Order-maintaining joins
+        IR::Join { .. } => {},
 
-#[expect(clippy::too_many_arguments)]
-#[recursive::recursive]
-fn is_sorted_rec(
-    root: Node,
-    ir_arena: &Arena<IR>,
-    expr_arena: &Arena<AExpr>,
-    seen: &mut PlHashSet<Node>,
-    sortedness: &mut PlHashMap<Node, IRSorted>,
-    cache_proxy: &mut PlHashMap<UniqueId, Option<IRSorted>>,
-    amort_passed_columns: &mut PlHashSet<PlSmallStr>,
-    create_full_map: bool,
-) -> Option<IRSorted> {
-    if let Some(s) = sortedness.get(&root) {
-        return Some(s.clone());
-    }
-    if !seen.insert(root) {
-        return None;
-    }
-
-    macro_rules! rec {
-        ($node:expr) => {{
-            is_sorted_rec(
-                $node,
-                ir_arena,
-                expr_arena,
-                seen,
-                sortedness,
-                cache_proxy,
-                amort_passed_columns,
-                create_full_map,
-            )
-        }};
-    }
-
-    if create_full_map {
-        for input in ir_arena.get(root).inputs() {
-            rec!(input);
-        }
-    }
-
-    // @NOTE: Most of the below implementations are very very conservative.
-    let sorted = match ir_arena.get(root) {
-        #[cfg(feature = "python")]
-        IR::PythonScan { .. } => None,
-        IR::Slice {
-            input,
-            offset: _,
-            len: _,
-        } => rec!(*input),
-        IR::Filter {
-            input,
-            predicate: _,
-        } => rec!(*input),
-        IR::Scan { .. } => None,
-        IR::DataFrameScan { df, .. } => {
-            let sorted_cols = df
-                .columns()
-                .iter()
-                .filter_map(|c| match c.is_sorted_flag() {
-                    IsSorted::Not => None,
-                    IsSorted::Ascending => Some(Sorted {
-                        column: c.name().clone(),
-                        descending: Some(false),
-                        nulls_last: Some(c.get(0).is_ok_and(|v| !v.is_null())),
-                    }),
-                    IsSorted::Descending => Some(Sorted {
-                        column: c.name().clone(),
-                        descending: Some(true),
-                        nulls_last: Some(c.get(0).is_ok_and(|v| !v.is_null())),
-                    }),
-                })
-                .collect_vec();
-            (!sorted_cols.is_empty()).then(|| IRSorted(sorted_cols.into()))
-        },
-        IR::SimpleProjection { input, columns } => {
-            let (input, columns) = (*input, columns.clone());
-            match rec!(input) {
-                None => None,
-                Some(v) => {
-                    let first_unsorted_key = v.0.iter().position(|v| !columns.contains(&v.column));
-                    match first_unsorted_key {
-                        None => Some(v),
-                        Some(0) => None,
-                        Some(i) => Some(IRSorted(v.0.iter().take(i).cloned().collect())),
-                    }
-                },
-            }
-        },
-        IR::Select { input, expr, .. } => {
-            let input = *input;
-            let input_sorted = rec!(input);
-
-            if let Some(input_sorted) = &input_sorted {
-                // We can keep a sorted column if it was kept and not changed.
-
-                amort_passed_columns.clear();
-                amort_passed_columns.extend(expr.iter().filter_map(|e| {
-                    let column = into_column(e.node(), expr_arena)?;
-                    (column == e.output_name()).then(|| column.clone())
-                }));
-
-                let first_unkept_key = input_sorted
-                    .0
-                    .iter()
-                    .position(|v| !amort_passed_columns.contains(&v.column));
-                match first_unkept_key {
-                    None => Some(input_sorted.clone()),
-                    Some(0) => {
-                        let input_schema = ir_arena.get(input).schema(ir_arena);
-                        first_expr_ir_sorted(
-                            expr,
-                            expr_arena,
-                            input_schema.as_ref(),
-                            Some(&input_sorted.0),
-                        )
-                        .map(|s| IRSorted([s].into()))
-                    },
-                    Some(i) => Some(IRSorted(input_sorted.0.iter().take(i).cloned().collect())),
-                }
-            } else {
-                let input_schema = ir_arena.get(input).schema(ir_arena);
-                first_expr_ir_sorted(expr, expr_arena, input_schema.as_ref(), None)
-                    .map(|s| IRSorted([s].into()))
-            }
-        },
-        IR::HStack { input, exprs, .. } => {
-            let input = *input;
-            let input_sorted = rec!(input);
-
-            if let Some(input_sorted) = &input_sorted {
-                // We can keep a sorted column if it was not overwritten.
-
-                amort_passed_columns.clear();
-                amort_passed_columns.extend(exprs.iter().filter_map(|e| {
-                    match into_column(e.node(), expr_arena) {
-                        None => Some(e.output_name().clone()),
-                        Some(c) if c == e.output_name() => None,
-                        Some(_) => Some(e.output_name().clone()),
-                    }
-                }));
-
-                let first_overwritten_key = input_sorted
-                    .0
-                    .iter()
-                    .position(|v| amort_passed_columns.contains(&v.column));
-                match first_overwritten_key {
-                    None => Some(input_sorted.clone()),
-                    Some(0) => {
-                        let input_schema = ir_arena.get(input).schema(ir_arena);
-                        first_expr_ir_sorted(
-                            exprs,
-                            expr_arena,
-                            input_schema.as_ref(),
-                            Some(&input_sorted.0),
-                        )
-                        .map(|s| IRSorted([s].into()))
-                    },
-                    Some(i) => Some(IRSorted(input_sorted.0.iter().take(i).cloned().collect())),
-                }
-            } else {
-                let input_schema = ir_arena.get(input).schema(ir_arena);
-                first_expr_ir_sorted(exprs, expr_arena, input_schema.as_ref(), None)
-                    .map(|s| IRSorted([s].into()))
-            }
-        },
-        IR::Sort {
-            input: _,
-            by_column,
-            slice: _,
-            sort_options,
-        } => {
-            let mut s = by_column
-                .iter()
-                .map_while(|e| {
-                    into_column(e.node(), expr_arena).map(|c| Sorted {
-                        column: c.clone(),
-                        descending: Some(false),
-                        nulls_last: Some(false),
-                    })
-                })
-                .collect::<Vec<_>>();
-            if sort_options.descending.len() != 1 {
-                s.iter_mut()
-                    .zip(sort_options.descending.iter())
-                    .for_each(|(s, &d)| s.descending = Some(d));
-            } else if sort_options.descending[0] {
-                s.iter_mut().for_each(|s| s.descending = Some(true));
-            }
-            if sort_options.nulls_last.len() != 1 {
-                s.iter_mut()
-                    .zip(sort_options.nulls_last.iter())
-                    .for_each(|(s, &d)| s.nulls_last = Some(d));
-            } else if sort_options.nulls_last[0] {
-                s.iter_mut().for_each(|s| s.nulls_last = Some(true));
-            }
-
-            Some(IRSorted(s.into()))
-        },
-        IR::Cache { input, id } => {
-            let (input, id) = (*input, *id);
-            if let Some(s) = cache_proxy.get(&id) {
-                s.clone()
-            } else {
-                let s = rec!(input);
-                cache_proxy.insert(id, s.clone());
-                s
-            }
-        },
-        IR::GroupBy {
-            input,
-            keys,
-            options,
-            maintain_order: true,
-            ..
-        } if !options.is_rolling() && !options.is_dynamic() => {
-            let input = *input;
-            let input_sorted = rec!(input)?;
-
-            amort_passed_columns.clear();
-            amort_passed_columns.extend(keys.iter().filter_map(|e| {
-                let column = into_column(e.node(), expr_arena)?;
-                (column == e.output_name()).then(|| column.clone())
-            }));
-
-            // We can keep a sorted key column if it was kept and not changed.
-
-            let first_unkept_key = input_sorted
-                .0
-                .iter()
-                .position(|v| !amort_passed_columns.contains(&v.column));
-            match first_unkept_key {
-                None => Some(input_sorted.clone()),
-                Some(0) => {
-                    let input_schema = ir_arena.get(input).schema(ir_arena);
-                    first_expr_ir_sorted(keys, expr_arena, input_schema.as_ref(), None)
-                        .map(|s| IRSorted([s].into()))
-                },
-                Some(i) => Some(IRSorted(input_sorted.0.iter().take(i).cloned().collect())),
-            }
-        },
-        #[cfg(feature = "dynamic_group_by")]
-        IR::GroupBy { options, .. } if options.is_rolling() => {
-            let Some(rolling_options) = &options.rolling else {
-                unreachable!()
-            };
-            Some(IRSorted(
-                [Sorted {
-                    column: rolling_options.index_column.clone(),
-                    descending: None,
-                    nulls_last: None,
-                }]
-                .into(),
-            ))
-        },
-        #[cfg(feature = "dynamic_group_by")]
-        IR::GroupBy { keys, options, .. } if options.is_dynamic() => {
-            let Some(dynamic_options) = &options.dynamic else {
-                unreachable!()
-            };
-            keys.is_empty().then(|| {
-                IRSorted(
-                    [Sorted {
-                        column: dynamic_options.index_column.clone(),
-                        descending: None,
-                        nulls_last: None,
-                    }]
-                    .into(),
-                )
-            })
-        },
-
-        IR::GroupBy { .. } => None,
-        IR::Join { .. } => None,
         IR::MapFunction { input, function } => match function {
             FunctionIR::Hint(hint) => match hint {
-                HintIR::Sorted(v) => Some(IRSorted(v.clone())),
-                #[expect(unreachable_patterns)]
-                _ => rec!(*input),
+                HintIR::Sorted(v) => {
+                    *edges_provider.get_out_edge_mut(0) =
+                        FramePartitioning::from_iter(v.iter().cloned());
+                },
             },
-            _ => None,
+            _ => {},
         },
-        IR::Union { .. } => None,
-        IR::HConcat { .. } => None,
-        IR::ExtContext { .. } => None,
-        IR::Sink { .. } => None,
-        IR::SinkMultiple { .. } => None,
+
+        IR::Union { .. } | IR::HConcat { .. } | IR::ExtContext { .. } => {},
+
+        IR::Sink { .. } | IR::SinkMultiple { .. } => {
+            let partitioning = edges_provider.get_in_edge_mut(0).clone();
+
+            edges_provider
+                .map_out_edges_mut(|e| *e = partitioning.clone())
+                .for_each(|_| ());
+        },
+
         #[cfg(feature = "merge_sorted")]
-        IR::MergeSorted { key, .. } => Some(IRSorted(
-            [Sorted {
+        IR::MergeSorted { key, .. } => {
+            *edges_provider.get_out_edge_mut(0) = FramePartitioning::from_iter(Some(Sorted {
                 column: key.clone(),
                 descending: None,
                 nulls_last: None,
-            }]
-            .into(),
-        )),
-        IR::Distinct { input, options } => {
+            }))
+        },
+
+        IR::Distinct { input: _, options } => {
+            let ([mut partitioning], [out_edge]) = unpack_edges!(2);
+
             if !options.maintain_order {
-                return None;
+                for v in partitioning.make_mut().values_mut() {
+                    v.descending = None;
+                    v.nulls_last = None;
+                }
             }
 
-            let input = *input;
-            rec!(input)
-        },
-        IR::Invalid => unreachable!(),
-    };
+            if let Some(subset) = options.subset.as_deref() {
+                partitioning.make_mut().extend(subset.iter().map(|name| {
+                    (
+                        name.clone(),
+                        Sorted {
+                            column: name.clone(),
+                            descending: None,
+                            nulls_last: None,
+                        },
+                    )
+                }))
+            } else {
+                partitioning.make_mut().extend(
+                    ir_arena
+                        .get(current_ir_node)
+                        .schema(ir_arena)
+                        .iter_names()
+                        .map(|name| {
+                            (
+                                name.clone(),
+                                Sorted {
+                                    column: name.clone(),
+                                    descending: None,
+                                    nulls_last: None,
+                                },
+                            )
+                        }),
+                )
+            }
 
-    if let Some(sorted) = sorted.clone() {
-        sortedness.insert(root, sorted);
+            *out_edge = partitioning;
+        },
+
+        IR::Invalid => unreachable!(),
     }
-    sorted
 }
 
 fn first_expr_ir_sorted(
     exprs: &[ExprIR],
     arena: &Arena<AExpr>,
     schema: &Schema,
-    input_sorted: Option<&[Sorted]>,
+    input_sorted: &FramePartitioning,
 ) -> Option<Sorted> {
     exprs.iter().find_map(|e| {
         aexpr_sortedness(arena.get(e.node()), arena, schema, input_sorted).map(|s| Sorted {
@@ -743,16 +522,16 @@ pub fn aexpr_sortedness(
     aexpr: &AExpr,
     arena: &Arena<AExpr>,
     schema: &Schema,
-    input_sorted: Option<&[Sorted]>,
+    input_sorted: &FramePartitioning,
 ) -> Option<AExprSorted> {
     match aexpr {
         AExpr::Element => None,
         AExpr::Explode { .. } => None,
         AExpr::Column(col) => {
-            let fst = input_sorted?.first()?;
-            (fst.column == col).then_some(AExprSorted {
-                descending: fst.descending,
-                nulls_last: fst.nulls_last,
+            let sorted = input_sorted.get(col)?;
+            Some(AExprSorted {
+                descending: sorted.descending,
+                nulls_last: sorted.nulls_last,
             })
         },
         #[cfg(feature = "dtype-struct")]
@@ -820,7 +599,7 @@ pub fn function_expr_sortedness(
     inputs: &[ExprIR],
     arena: &Arena<AExpr>,
     schema: &Schema,
-    input_sorted: Option<&[Sorted]>,
+    input_sorted: &FramePartitioning,
 ) -> Option<AExprSorted> {
     macro_rules! rec_ae {
         ($node:expr) => {{ aexpr_sortedness(arena.get($node), arena, schema, input_sorted) }};

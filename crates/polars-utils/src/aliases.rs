@@ -11,6 +11,7 @@ pub type PlIndexMap<K, V> = indexmap::IndexMap<K, V, PlRandomState>;
 pub type PlIndexSet<K> = indexmap::IndexSet<K, PlRandomState>;
 
 /// PlHashMap container with a getter that clears the vec.
+#[derive(Default)]
 pub struct ScratchMap<K, V>(PlHashMap<K, V>);
 
 impl<K, V> ScratchMap<K, V> {

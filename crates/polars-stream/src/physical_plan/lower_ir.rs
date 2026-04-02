@@ -18,6 +18,7 @@ use polars_plan::dsl::default_values::DefaultFieldValues;
 use polars_plan::dsl::deletion::DeletionFilesList;
 use polars_plan::dsl::{CallbackSinkType, ExtraColumnsPolicy, FileScanIR, SinkTypeIR};
 use polars_plan::plans::expr_ir::{ExprIR, OutputName};
+use polars_plan::plans::ir_traversal::ir_node_key::IRNodeKey;
 use polars_plan::plans::{AExpr, FunctionIR, IR, IRAggExpr, LiteralValue, write_ir_non_recursive};
 use polars_plan::prelude::*;
 use polars_utils::arena::{Arena, Node};
@@ -1092,7 +1093,12 @@ pub fn lower_ir(
             let input_schema = &phys_sm[phys_input.node].output_schema;
             let are_keys_sorted = ctx
                 .sortedness
-                .are_keys_sorted_any(input, &keys, expr_arena, input_schema)
+                .are_keys_sorted_any(
+                    &IRNodeKey::new(input, ir_arena),
+                    &keys,
+                    expr_arena,
+                    input_schema,
+                )
                 .is_some();
 
             return build_group_by_stream(
@@ -1203,13 +1209,13 @@ pub fn lower_ir(
             let phys_right = lower_ir!(input_right)?;
 
             let left_on_sorted = ctx.sortedness.are_keys_sorted_any(
-                input_left,
+                &IRNodeKey::new(input_left, ir_arena),
                 &left_on,
                 expr_arena,
                 &input_left_schema,
             );
             let right_on_sorted = ctx.sortedness.are_keys_sorted_any(
-                input_right,
+                &IRNodeKey::new(input_right, ir_arena),
                 &right_on,
                 expr_arena,
                 &input_right_schema,
@@ -1341,13 +1347,13 @@ pub fn lower_ir(
 
                         let descending = match left_is_point(&left_on, &right_on, &args) {
                             true => ctx.sortedness.is_expr_sorted(
-                                input_left,
+                                &IRNodeKey::new(input_left, ir_arena),
                                 &left_on[0],
                                 expr_arena,
                                 &input_left_schema,
                             ),
                             false => ctx.sortedness.is_expr_sorted(
-                                input_right,
+                                &IRNodeKey::new(input_right, ir_arena),
                                 &right_on[0],
                                 expr_arena,
                                 &input_right_schema,
@@ -1474,7 +1480,12 @@ pub fn lower_ir(
             // Sorted unique node, the fastest strategy.
             let are_keys_sorted = ctx
                 .sortedness
-                .are_keys_sorted_any(input, &keys, expr_arena, input_schema.as_ref())
+                .are_keys_sorted_any(
+                    &IRNodeKey::new(input, ir_arena),
+                    &keys,
+                    expr_arena,
+                    input_schema.as_ref(),
+                )
                 .is_some();
             if are_keys_sorted
                 && matches!(
@@ -1681,7 +1692,12 @@ fn insert_sort_node_if_not_sorted(
 
     let input_schema = IR::schema_with_cache(input, ir_arena, schema_cache);
     if sortedness
-        .is_expr_sorted(input, on, expr_arena, &input_schema)
+        .is_expr_sorted(
+            &IRNodeKey::new(input, ir_arena),
+            on,
+            expr_arena,
+            &input_schema,
+        )
         .and_then(|s| s.descending)
         .is_none()
     {

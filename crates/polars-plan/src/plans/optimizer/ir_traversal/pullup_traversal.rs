@@ -61,36 +61,6 @@ impl<'provider, Edge> EdgesProvider<Edge> for BasicEdgeProvider<'provider, Edge>
     }
 }
 
-pub fn ir_pullup_traversal<Visitor, Edge: Default + Clone>(
-    roots: &[Node],
-    mut visitor_fn: Visitor,
-    ir_arena: &Arena<IR>,
-    expr_arena: &Arena<AExpr>,
-    cache: Option<&mut PlHashMap<IRNodeKey, Edge>>,
-) -> PolarsResult<()>
-where
-    Visitor: FnMut(Node, &Arena<IR>, &Arena<AExpr>, &BasicEdgeProvider<Edge>) -> PolarsResult<()>,
-{
-    let mut visited_caches: PlHashMap<IRNodeKey, Edge> = PlHashMap::default();
-    let cache_all = cache.is_some();
-
-    let cache = cache.unwrap_or(&mut visited_caches);
-
-    for node in roots.iter() {
-        ir_pullup_traversal_rec(
-            *node,
-            &mut visitor_fn,
-            ir_arena,
-            expr_arena,
-            cache,
-            cache_all,
-            None,
-        );
-    }
-
-    Ok(())
-}
-
 #[recursive::recursive]
 pub fn ir_pullup_traversal_rec<Visitor, Edge: Default + Clone>(
     node: Node,
@@ -99,44 +69,37 @@ pub fn ir_pullup_traversal_rec<Visitor, Edge: Default + Clone>(
     expr_arena: &Arena<AExpr>,
     cache: &mut PlHashMap<IRNodeKey, Edge>,
     cache_all: bool,
-    out_edge: Option<&mut Edge>,
-) -> PolarsResult<()>
+) -> PolarsResult<Edge>
 where
-    Visitor: FnMut(Node, &Arena<IR>, &Arena<AExpr>, &BasicEdgeProvider<Edge>) -> PolarsResult<()>,
+    Visitor:
+        FnMut(Node, &Arena<IR>, &Arena<AExpr>, &mut BasicEdgeProvider<Edge>) -> PolarsResult<()>,
 {
     let key = IRNodeKey::new(node, ir_arena);
 
     if let Some(edge) = cache.get(&key) {
-        *out_edge.unwrap() = edge.clone();
-        return Ok(());
+        return Ok(edge.clone());
     }
 
     let ir = ir_arena.get(node);
     let mut in_edges: UnitVec<Edge> = ir.inputs().map(|_| Edge::default()).collect();
 
-    let edge_provider = BasicEdgeProvider {
+    let mut out_edge = Edge::default();
+
+    let mut edge_provider = BasicEdgeProvider {
         in_edges: &mut in_edges,
-        out_edges: out_edge.map_or(&mut [], std::slice::from_mut),
+        out_edges: std::slice::from_mut(&mut out_edge),
     };
 
     for (node, edge) in ir.inputs().zip(edge_provider.in_edges.iter_mut()) {
-        ir_pullup_traversal_rec(
-            node,
-            visitor_fn,
-            ir_arena,
-            expr_arena,
-            cache,
-            cache_all,
-            Some(edge),
-        )?;
+        ir_pullup_traversal_rec(node, visitor_fn, ir_arena, expr_arena, cache, cache_all)?;
     }
 
-    visitor_fn(node, ir_arena, expr_arena, &edge_provider);
+    visitor_fn(node, ir_arena, expr_arena, &mut edge_provider);
 
     if matches!(ir_arena.get(node), IR::Cache { .. }) || cache_all {
-        let existing = cache.insert(key, todo!());
+        let existing = cache.insert(key, out_edge.clone());
         assert!(existing.is_none() || !matches!(ir_arena.get(node), IR::Cache { .. }));
     }
 
-    Ok(())
+    Ok(out_edge)
 }

@@ -8,7 +8,7 @@ use crate::plans::{AExprSorted, Sorted};
 
 static EMPTY: LazyLock<PlIndexMap<PlSmallStr, Sorted>> = LazyLock::new(Default::default);
 
-#[derive(Default, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct FramePartitioning {
     keys: Option<Arc<PlIndexMap<PlSmallStr, Sorted>>>,
 }

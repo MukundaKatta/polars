@@ -141,9 +141,9 @@ fn try_prune_sort_with_sortedness(
         descending: Some(*d),
         nulls_last: Some(*nl),
     });
-    let input_sortedness = is_sorted(*input, lp_arena, expr_arena)?;
+    let input_sortedness = is_sorted(*input, lp_arena, expr_arena);
     let node_sorts_most_columns =
-        prefix_dominance(input_sortedness.0.iter(), node_sortedness, |n1, n2| {
+        prefix_dominance(input_sortedness.values(), node_sortedness, |n1, n2| {
             *n1 == n2
         })?;
     if !node_sorts_most_columns {
