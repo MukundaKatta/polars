@@ -64,7 +64,7 @@ impl Edge {
         }
     }
 
-    fn normalize_partitioning(&mut self) {
+    fn unordered_partitioning_correction(&mut self) {
         if !self.is_unordered() {
             return;
         }
@@ -92,7 +92,7 @@ new_key_type! {
     pub struct EdgeKey;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VisitState {
     Pre,
     Post,
@@ -174,7 +174,7 @@ pub fn simplify_and_fetch_orderings(
         );
 
         edge_provider
-            .map_out_edges_mut(|e: &mut Edge| e.normalize_partitioning())
+            .map_out_edges_mut(|e: &mut Edge| e.unordered_partitioning_correction())
             .for_each(|_| ());
     }
 
@@ -263,6 +263,7 @@ impl SimplifyIRNodeOrder<'_> {
                 let ([in_edge], [out_edge]) = unpack_edges!(2);
 
                 if out_edge.is_unordered() && slice.is_none() {
+                    debug_assert_eq!(visit_state, VisitState::Pre);
                     *in_edge = out_edge.clone();
                     return true;
                 }
