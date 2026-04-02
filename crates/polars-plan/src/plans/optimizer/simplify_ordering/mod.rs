@@ -392,9 +392,9 @@ impl SimplifyIRNodeOrder<'_> {
                     options.maintain_order = false;
                     *out_edge = Edge::Unordered;
 
-                    for i in 0..edges_provider.num_in_edges() {
-                        *edges_provider.get_in_edge_mut(i) = Edge::Unordered
-                    }
+                    edges_provider
+                        .map_in_edges_mut(|e| *e = Edge::Unordered)
+                        .for_each(|_| ());
                 }
 
                 // Note, having no ordered inputs still cannot de-order the out edge, since the rows
@@ -449,12 +449,13 @@ impl SimplifyIRNodeOrder<'_> {
             },
 
             IR::HConcat { .. } | IR::Slice { .. } | IR::ExtContext { .. } => {
-                if (0..edges_provider.num_in_edges())
-                    .all(|i| edges_provider.get_in_edge_mut(i).is_unordered())
+                if edges_provider
+                    .map_in_edges_mut(|e| e.is_unordered())
+                    .all(|x| x)
                 {
-                    for i in 0..edges_provider.num_out_edges() {
-                        *edges_provider.get_out_edge_mut(i) = Edge::Unordered
-                    }
+                    edges_provider
+                        .map_out_edges_mut(|e| *e = Edge::Unordered)
+                        .for_each(|_| ())
                 }
             },
 
@@ -471,13 +472,16 @@ impl SimplifyIRNodeOrder<'_> {
                 assert_eq!(edges_provider.num_in_edges(), 1);
 
                 if edges_provider.get_in_edge_mut(0).is_unordered() {
-                    for i in 0..edges_provider.num_out_edges() {
-                        *edges_provider.get_out_edge_mut(i) = Edge::Unordered
-                    }
-                } else if (0..edges_provider.num_out_edges())
-                    .all(|i| edges_provider.get_in_edge_mut(i).is_unordered())
+                    edges_provider
+                        .map_out_edges_mut(|e| *e = Edge::Unordered)
+                        .for_each(|_| ())
+                } else if edges_provider
+                    .map_out_edges_mut(|e| e.is_unordered())
+                    .all(|x| x)
                 {
-                    *edges_provider.get_in_edge_mut(0) = Edge::Unordered
+                    edges_provider
+                        .map_in_edges_mut(|e| *e = Edge::Unordered)
+                        .for_each(|_| ())
                 }
             },
 
@@ -518,7 +522,7 @@ fn unlink_node(
     current_ir_node: Node,
     ir_arena: &mut Arena<IR>,
     ir_node_to_edge_keys_map: &mut PlHashMap<IRNodeKey, IRNodeEdgeKeys<EdgeKey>>,
-) -> bool {
+) {
     let input_to_current_ir_node = {
         let mut inputs = ir_arena.get(current_ir_node).inputs();
         let node = inputs.next().unwrap();
@@ -580,6 +584,4 @@ fn unlink_node(
     out_edges_of_new_input_node[out_edge_idx_in_new_input_node] =
         consumer_node_in_edges[consumer_node_input_idx];
     out_nodes_of_new_input_node[out_edge_idx_in_new_input_node] = consumer_node;
-
-    true
 }

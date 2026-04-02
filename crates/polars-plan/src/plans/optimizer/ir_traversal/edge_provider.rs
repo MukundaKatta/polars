@@ -30,6 +30,22 @@ pub trait IREdgeProvivder<Edge> {
     fn num_in_edges(&self) -> usize;
 
     fn num_out_edges(&self) -> usize;
+
+    fn map_in_edges_mut<'a, O, F>(&'a mut self, mut f: F) -> impl Iterator<Item = O> + 'a
+    where
+        Edge: 'a,
+        F: for<'b> FnMut(&'b mut Edge) -> O + 'a,
+    {
+        (0..self.num_in_edges()).map(move |i| f(self.get_in_edge_mut(i)))
+    }
+
+    fn map_out_edges_mut<'a, O, F>(&'a mut self, mut f: F) -> impl Iterator<Item = O>
+    where
+        Edge: 'a,
+        F: for<'b> FnMut(&'b mut Edge) -> O + 'a,
+    {
+        (0..self.num_out_edges()).map(move |i| f(self.get_out_edge_mut(i)))
+    }
 }
 
 pub struct IRTraversalGraphEdgeProvider<'a, EdgeKey: slotmap::Key, Edge>
