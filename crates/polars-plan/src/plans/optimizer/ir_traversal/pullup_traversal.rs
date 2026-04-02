@@ -17,11 +17,15 @@ pub fn ir_pullup_traversal<Visitor, Edge: Default + Clone>(
     mut visitor_fn: Visitor,
     ir_arena: &Arena<IR>,
     expr_arena: &Arena<AExpr>,
+    cache: Option<&mut PlHashMap<IRNodeKey, Edge>>,
 ) -> PolarsResult<()>
 where
     Visitor: FnMut(Node, &Arena<IR>, &Arena<AExpr>, &BasicEdgeProvider<Edge>) -> PolarsResult<()>,
 {
     let mut visited_caches: PlHashMap<IRNodeKey, Edge> = PlHashMap::default();
+    let cache_all = cache.is_some();
+
+    let cache = cache.unwrap_or(&mut visited_caches);
 
     for node in roots.iter() {
         ir_pullup_traversal_rec(
@@ -29,7 +33,8 @@ where
             &mut visitor_fn,
             ir_arena,
             expr_arena,
-            &mut visited_caches,
+            cache,
+            cache_all,
             None,
         );
     }
@@ -42,7 +47,8 @@ pub fn ir_pullup_traversal_rec<Visitor, Edge: Default + Clone>(
     visitor_fn: &mut Visitor,
     ir_arena: &Arena<IR>,
     expr_arena: &Arena<AExpr>,
-    visited_caches: &mut PlHashMap<IRNodeKey, Edge>,
+    cache: &mut PlHashMap<IRNodeKey, Edge>,
+    cache_all: bool,
     out_edge: Option<&mut Edge>,
 ) -> PolarsResult<()>
 where
@@ -50,7 +56,7 @@ where
 {
     let key = IRNodeKey::new(node, ir_arena);
 
-    if let Some(edge) = visited_caches.get(&key) {
+    if let Some(edge) = cache.get(&key) {
         *out_edge.unwrap() = edge.clone();
         return Ok(());
     }
@@ -69,16 +75,17 @@ where
             visitor_fn,
             ir_arena,
             expr_arena,
-            visited_caches,
+            cache,
+            cache_all,
             Some(edge),
         )?;
     }
 
     visitor_fn(node, ir_arena, expr_arena, &edge_provider);
 
-    if matches!(ir_arena.get(node), IR::Cache { .. }) {
-        let existing = visited_caches.insert(key, todo!());
-        assert!(existing.is_none());
+    if matches!(ir_arena.get(node), IR::Cache { .. }) || cache_all {
+        let existing = cache.insert(key, todo!());
+        assert!(existing.is_none() || !matches!(ir_arena.get(node), IR::Cache { .. }));
     }
 
     Ok(())

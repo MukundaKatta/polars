@@ -21,6 +21,7 @@ mod expand_datasets;
 pub use expand_datasets::ExpandedPythonScan;
 mod collapse_sort;
 pub mod ir_traversal;
+pub mod partitioning;
 mod predicate_pushdown;
 mod projection_pushdown;
 mod simplify_expr;
