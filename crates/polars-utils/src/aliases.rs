@@ -10,7 +10,7 @@ pub type PlHashSet<V> = hashbrown::HashSet<V, PlRandomState>;
 pub type PlIndexMap<K, V> = indexmap::IndexMap<K, V, PlRandomState>;
 pub type PlIndexSet<K> = indexmap::IndexSet<K, PlRandomState>;
 
-/// PlHashMap container with a getter that clears the vec.
+/// PlHashMap container with a getter that clears the hashmap.
 #[derive(Default)]
 pub struct ScratchMap<K, V>(PlHashMap<K, V>);
 
