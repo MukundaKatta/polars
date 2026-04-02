@@ -10,6 +10,17 @@ pub type PlHashSet<V> = hashbrown::HashSet<V, PlRandomState>;
 pub type PlIndexMap<K, V> = indexmap::IndexMap<K, V, PlRandomState>;
 pub type PlIndexSet<K> = indexmap::IndexSet<K, PlRandomState>;
 
+/// PlHashMap container with a getter that clears the vec.
+pub struct ScratchMap<K, V>(PlHashMap<K, V>);
+
+impl<K, V> ScratchMap<K, V> {
+    /// Clear the hashmap and return a mutable reference to it.
+    pub fn get(&mut self) -> &mut PlHashMap<K, V> {
+        self.0.clear();
+        &mut self.0
+    }
+}
+
 pub trait SeedableFromU64SeedExt {
     fn seed_from_u64(seed: u64) -> Self;
 }

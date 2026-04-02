@@ -4,6 +4,7 @@ use polars_core::chunked_array::cast::CastOptions;
 use polars_core::prelude::{FillNullStrategy, PlHashMap, PlHashSet};
 use polars_core::schema::Schema;
 use polars_core::series::IsSorted;
+use polars_utils::aliases::ScratchMap;
 use polars_utils::arena::{Arena, Node};
 use polars_utils::itertools::Itertools;
 use polars_utils::pl_str::PlSmallStr;
@@ -193,25 +194,217 @@ pub fn is_sorted_pullup_single(
     ir_arena: &Arena<IR>,
     expr_arena: &Arena<AExpr>,
     edges_provider: &mut BasicEdgeProvider<FramePartitioning>,
+    column_names_map: &mut ScratchMap<PlSmallStr, Option<PlSmallStr>>,
 ) {
     macro_rules! unpack_edges {
-        ($total:literal) => {
-            edges_provider.unpack_edges_mut::<_, _, $total>().unwrap()
-        };
+        ($total:literal) => {{
+            let (l, r) = edges_provider.unpack_edges_mut::<_, _, $total>().unwrap();
+            let l: [FramePartitioning; _] = l.map(|x| x.clone());
+            (l, r)
+        }};
     }
 
     match ir_arena.get(current_ir_node) {
-        IR::Select { .. } | IR::HStack { .. } => {
-            let (exprs, is_hstack) = match ir_arena.get(current_ir_node) {
-                IR::Select { expr, .. } => (expr, false),
-                IR::HStack { exprs, schema, .. } => {
-                    let v = schema.len() != exprs.len();
-                    (exprs, v)
-                },
-                _ => unreachable!(),
+        #[cfg(feature = "python")]
+        IR::PythonScan { .. } => {},
+
+        IR::Filter { .. } | IR::Slice { .. } => {
+            let ([partitioning], [out_edge]) = unpack_edges!(2);
+            *out_edge = partitioning.clone();
+        },
+
+        IR::Scan { .. } => {},
+
+        IR::DataFrameScan { df, .. } => {
+            let ([], [out_edge]) = unpack_edges!(2);
+
+            let sorted_cols = df
+                .columns()
+                .iter()
+                .filter_map(|c| match c.is_sorted_flag() {
+                    IsSorted::Not => None,
+                    IsSorted::Ascending => Some(Sorted {
+                        column: c.name().clone(),
+                        descending: Some(false),
+                        nulls_last: Some(c.get(0).is_ok_and(|v| !v.is_null())),
+                    }),
+                    IsSorted::Descending => Some(Sorted {
+                        column: c.name().clone(),
+                        descending: Some(true),
+                        nulls_last: Some(c.get(0).is_ok_and(|v| !v.is_null())),
+                    }),
+                })
+                .collect_vec();
+
+            *out_edge = FramePartitioning::from_iter(sorted_cols);
+        },
+
+        IR::SimpleProjection { columns, .. } => {
+            let ([mut partitioning], [out_edge]) = unpack_edges!(2);
+
+            if let Some(i) = partitioning.keys().position(|name| !columns.contains(name)) {
+                partitioning.truncate(i);
+            }
+
+            *out_edge = partitioning;
+        },
+
+        IR::Select {
+            input, expr: exprs, ..
+        }
+        | IR::HStack { input, exprs, .. } => {
+            let column_names_map = column_names_map.get();
+
+            if matches!(ir_arena.get(current_ir_node), IR::HStack { .. }) {
+                for name in ir_arena.get(*input).schema(ir_arena).iter_names() {
+                    column_names_map.insert(name.clone(), None);
+                }
+            }
+
+            let ([mut partitioning], [out_edge]) = unpack_edges!(2);
+
+            for eir in exprs.iter() {
+                match expr_arena.get(eir.node()) {
+                    AExpr::Column(name) => {
+                        column_names_map.insert(
+                            name.clone(),
+                            (name != eir.output_name()).then(|| eir.output_name().clone()),
+                        );
+                    },
+                    _ => {
+                        column_names_map.remove(eir.output_name());
+                    },
+                }
+            }
+
+            let mut i: usize = 0;
+
+            while i < partitioning.len() {
+                let name = &partitioning[i].column;
+
+                match column_names_map.get(name) {
+                    None => break,
+                    Some(None) => {},
+                    Some(Some(new_name)) => {
+                        partitioning.make_mut()[i].column = new_name.clone();
+                    },
+                }
+
+                i += 1;
+            }
+
+            partitioning.truncate(i);
+
+            if partitioning.is_empty()
+                && let Some(sorted) = first_expr_ir_sorted(
+                    exprs,
+                    expr_arena,
+                    &ir_arena.get(*input).schema(ir_arena),
+                    None,
+                )
+            {
+                partitioning = FramePartitioning::from_iter(vec![sorted])
+            }
+
+            *out_edge = partitioning;
+        },
+
+        IR::Sort {
+            input,
+            by_column,
+            slice,
+            sort_options,
+        } => {
+            let mut s = by_column
+                .iter()
+                .map_while(|e| {
+                    into_column(e.node(), expr_arena).map(|c| Sorted {
+                        column: c.clone(),
+                        descending: Some(false),
+                        nulls_last: Some(false),
+                    })
+                })
+                .collect::<Vec<_>>();
+            if sort_options.descending.len() != 1 {
+                s.iter_mut()
+                    .zip(sort_options.descending.iter())
+                    .for_each(|(s, &d)| s.descending = Some(d));
+            } else if sort_options.descending[0] {
+                s.iter_mut().for_each(|s| s.descending = Some(true));
+            }
+            if sort_options.nulls_last.len() != 1 {
+                s.iter_mut()
+                    .zip(sort_options.nulls_last.iter())
+                    .for_each(|(s, &d)| s.nulls_last = Some(d));
+            } else if sort_options.nulls_last[0] {
+                s.iter_mut().for_each(|s| s.nulls_last = Some(true));
+            }
+
+            *edges_provider.get_out_edge_mut(0) = FramePartitioning::from_iter(s);
+        },
+
+        IR::Cache { input, id } => {
+            let partitioning = edges_provider.get_in_edge_mut(0).clone();
+
+            edges_provider
+                .map_out_edges_mut(|e| *e = partitioning.clone())
+                .for_each(|_| ());
+        },
+
+        IR::GroupBy {
+            input: _,
+            keys,
+            aggs,
+            schema: _,
+            maintain_order,
+            options,
+            apply,
+        } => {
+            let ([input_partitioning], [out_edge]) = unpack_edges!(2);
+
+            #[cfg(feature = "dynamic_group_by")]
+            if let Some(rolling_options) = &options.rolling {
+                *out_edge = FramePartitioning::from_iter(vec![Sorted {
+                    column: rolling_options.index_column.clone(),
+                    descending: None,
+                    nulls_last: None,
+                }]);
+
+                return;
+            }
+
+            #[cfg(feature = "dynamic_group_by")]
+            if let Some(dynamic_options) = &options.dynamic {
+                *out_edge = FramePartitioning::from_iter([Sorted {
+                    column: dynamic_options.index_column.clone(),
+                    descending: None,
+                    nulls_last: None,
+                }]);
+
+                return;
             };
 
-            let ([in_edge], [out_edge]) = unpack_edges!(2);
+            let mut in_common_prefix = *maintain_order;
+
+            *out_edge = FramePartitioning::from_iter(keys.iter().map(|eir| {
+                let mut out = Sorted {
+                    column: eir.output_name().clone(),
+                    descending: None,
+                    nulls_last: None,
+                };
+
+                if in_common_prefix
+                    && let AExpr::Column(input_name) = expr_arena.get(eir.node())
+                    && let Some(sorted) = input_partitioning.get(input_name)
+                {
+                    out.descending = sorted.descending;
+                    out.nulls_last = sorted.nulls_last;
+                } else {
+                    in_common_prefix = false;
+                }
+
+                out
+            }));
         },
 
         _ => todo!(),
