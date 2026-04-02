@@ -3,13 +3,62 @@ use polars_error::PolarsResult;
 use polars_utils::arena::{Arena, Node};
 use polars_utils::{UnitVec, unitvec};
 
-use crate::plans::ir_traversal::edge_provider::IREdgeProvivder;
+use crate::plans::ir_traversal::edge_provider::IREdgeProvider;
 use crate::plans::ir_traversal::ir_node_key::IRNodeKey;
 use crate::plans::{AExpr, IR};
 
 pub struct BasicEdgeProvider<'a, Edge> {
     in_edges: &'a mut [Edge],
     out_edges: &'a mut [Edge],
+}
+
+impl<'provider, Edge> IREdgeProvider<Edge> for BasicEdgeProvider<'provider, Edge> {
+    fn unpack_edges_mut<
+        'a,
+        const NUM_INPUTS: usize,
+        const NUM_OUTPUTS: usize,
+        const TOTAL_EDGES: usize,
+    >(
+        &'a mut self,
+    ) -> Option<([&'a mut Edge; NUM_INPUTS], [&'a mut Edge; NUM_OUTPUTS])>
+    where
+        Edge: 'a,
+    {
+        const {
+            assert!(NUM_INPUTS + NUM_OUTPUTS == TOTAL_EDGES);
+        }
+
+        Some((
+            self.in_edges
+                .get_disjoint_mut(std::array::from_fn(|i| i))
+                .unwrap(),
+            self.out_edges
+                .get_disjoint_mut(std::array::from_fn(|i| i))
+                .unwrap(),
+        ))
+    }
+
+    fn num_in_edges(&self) -> usize {
+        self.in_edges.len()
+    }
+
+    fn num_out_edges(&self) -> usize {
+        self.out_edges.len()
+    }
+
+    fn get_in_edge_mut<'a>(&'a mut self, idx: usize) -> &'a mut Edge
+    where
+        Edge: 'a,
+    {
+        &mut self.in_edges[idx]
+    }
+
+    fn get_out_edge_mut<'a>(&'a mut self, idx: usize) -> &'a mut Edge
+    where
+        Edge: 'a,
+    {
+        &mut self.out_edges[idx]
+    }
 }
 
 pub fn ir_pullup_traversal<Visitor, Edge: Default + Clone>(

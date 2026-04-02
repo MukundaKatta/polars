@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(all(feature = "strings", feature = "concat_str"))]
 use crate::plans::IRStringFunction;
+use crate::plans::ir_traversal::edge_provider::IREdgeProvider;
+use crate::plans::ir_traversal::pullup_traversal::BasicEdgeProvider;
 use crate::plans::partitioning::frame::FramePartitioning;
 use crate::plans::{
     AExpr, ExprIR, FunctionIR, HintIR, IR, IRFunctionExpr, Sorted, ToFieldContext,
@@ -187,11 +189,33 @@ pub fn is_sorted(root: Node, ir_arena: &Arena<IR>, expr_arena: &Arena<AExpr>) ->
 }
 
 pub fn is_sorted_pullup_single(
-    current_node: Node,
+    current_ir_node: Node,
     ir_arena: &Arena<IR>,
     expr_arena: &Arena<AExpr>,
-    edge_provider: &BasicEdgeProvider<FramePartitioning>,
+    edges_provider: &mut BasicEdgeProvider<FramePartitioning>,
 ) {
+    macro_rules! unpack_edges {
+        ($total:literal) => {
+            edges_provider.unpack_edges_mut::<_, _, $total>().unwrap()
+        };
+    }
+
+    match ir_arena.get(current_ir_node) {
+        IR::Select { .. } | IR::HStack { .. } => {
+            let (exprs, is_hstack) = match ir_arena.get(current_ir_node) {
+                IR::Select { expr, .. } => (expr, false),
+                IR::HStack { exprs, schema, .. } => {
+                    let v = schema.len() != exprs.len();
+                    (exprs, v)
+                },
+                _ => unreachable!(),
+            };
+
+            let ([in_edge], [out_edge]) = unpack_edges!(2);
+        },
+
+        _ => todo!(),
+    }
 }
 
 #[expect(clippy::too_many_arguments)]
