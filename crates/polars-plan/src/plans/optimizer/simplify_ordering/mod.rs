@@ -1,10 +1,7 @@
 pub mod expr;
-pub mod ir_graph;
-pub mod ir_node_key;
 
 use std::sync::Arc;
 
-use ir_graph::{IRNodeEdgeKeys, build_ir_traversal_graph, unpack_edges_mut};
 use polars_core::frame::UniqueKeepStrategy;
 use polars_core::prelude::PlHashMap;
 use polars_utils::arena::{Arena, Node};
@@ -12,8 +9,10 @@ use polars_utils::scratch_vec::ScratchVec;
 use slotmap::{SlotMap, new_key_type};
 
 use crate::dsl::{SinkTypeIR, UnionOptions};
+use crate::plans::ir_traversal::{
+    IRNodeEdgeKeys, IRNodeKey, build_ir_traversal_graph, unpack_edges_mut,
+};
 use crate::plans::simplify_ordering::expr::{ExprOrderSimplifier, ObservableOrders};
-use crate::plans::simplify_ordering::ir_node_key::IRNodeKey;
 use crate::plans::{IRAggExpr, is_scalar_ae};
 use crate::prelude::{AExpr, IR};
 
@@ -33,8 +32,6 @@ impl Edge {
 new_key_type! {
     pub struct EdgeKey;
 }
-
-type EdgesMap = SlotMap<EdgeKey, Edge>;
 
 pub fn simplify_and_fetch_orderings(
     roots: &[Node],
@@ -82,7 +79,7 @@ pub fn simplify_and_fetch_orderings(
 
 struct SimplifyIRNodeOrder<'a> {
     ir_node_to_edges_map: &'a mut PlHashMap<IRNodeKey, IRNodeEdgeKeys<EdgeKey>>,
-    all_edges_map: &'a mut EdgesMap,
+    all_edges_map: &'a mut SlotMap<EdgeKey, Edge>,
     ir_arena: &'a mut Arena<IR>,
     expr_arena: &'a mut Arena<AExpr>,
     eos_revisit_cache: &'a mut PlHashMap<Node, ObservableOrders>,
