@@ -42,6 +42,7 @@ where
     Ok(())
 }
 
+#[recursive::recursive]
 pub fn ir_pullup_traversal_rec<Visitor, Edge: Default + Clone>(
     node: Node,
     visitor_fn: &mut Visitor,

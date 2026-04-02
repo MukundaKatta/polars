@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(all(feature = "strings", feature = "concat_str"))]
 use crate::plans::IRStringFunction;
+use crate::plans::partitioning::frame::FramePartitioning;
 use crate::plans::{
     AExpr, ExprIR, FunctionIR, HintIR, IR, IRFunctionExpr, Sorted, ToFieldContext,
     constant_evaluate, into_column,
@@ -183,6 +184,14 @@ pub fn is_sorted(root: Node, ir_arena: &Arena<IR>, expr_arena: &Arena<AExpr>) ->
         &mut amort_passed_columns,
         false,
     )
+}
+
+pub fn is_sorted_pullup_single(
+    current_node: Node,
+    ir_arena: &Arena<IR>,
+    expr_arena: &Arena<AExpr>,
+    edge_provider: &BasicEdgeProvider<FramePartitioning>,
+) {
 }
 
 #[expect(clippy::too_many_arguments)]
