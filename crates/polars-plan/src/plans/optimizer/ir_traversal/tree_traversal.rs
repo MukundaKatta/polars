@@ -41,6 +41,8 @@ impl IRTreeTraversal {
             &BasicEdgeProvider<Edge>,
         ) -> PolarsResult<()>,
     {
+        assert!(self.pre_visit || self.post_visit);
+
         let mut visited_caches: PlHashMap<IRNodeKey, Edge> = PlHashMap::default();
 
         for node in roots.iter() {
