@@ -10,9 +10,7 @@ use slotmap::{SlotMap, new_key_type};
 
 use crate::dsl::{SinkTypeIR, UnionOptions};
 use crate::plans::ir_traversal::edge_provider::{EdgesProvider, IRTraversalGraphEdgeProvider};
-use crate::plans::ir_traversal::ir_graph::{
-    IRNodeEdgeKeys, build_ir_traversal_graph, unpack_edges_mut,
-};
+use crate::plans::ir_traversal::ir_graph::{IRNodeEdgeKeys, build_ir_traversal_graph};
 use crate::plans::ir_traversal::ir_node_key::IRNodeKey;
 use crate::plans::simplify_ordering::expr::{ExprOrderSimplifier, ObservableOrders};
 use crate::plans::{IRAggExpr, is_scalar_ae};
@@ -168,7 +166,7 @@ impl SimplifyIRNodeOrder<'_> {
             },
 
             IR::Sort {
-                input,
+                input: _,
                 by_column,
                 slice,
                 sort_options,

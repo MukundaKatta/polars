@@ -1,10 +1,10 @@
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 
-use polars_core::prelude::{PlHashMap, PlIndexMap};
+use polars_core::prelude::PlIndexMap;
 use polars_utils::pl_str::PlSmallStr;
 
-use crate::plans::{AExprSorted, Sorted};
+use crate::plans::Sorted;
 
 static EMPTY: LazyLock<PlIndexMap<PlSmallStr, Sorted>> = LazyLock::new(Default::default);
 

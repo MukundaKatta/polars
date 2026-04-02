@@ -1,14 +1,13 @@
 use std::sync::Arc;
 
 use polars_core::chunked_array::cast::CastOptions;
-use polars_core::prelude::{FillNullStrategy, PlHashMap, PlHashSet};
+use polars_core::prelude::{FillNullStrategy, PlHashMap};
 use polars_core::schema::Schema;
 use polars_core::series::IsSorted;
 use polars_utils::aliases::ScratchMap;
 use polars_utils::arena::{Arena, Node};
 use polars_utils::itertools::Itertools;
 use polars_utils::pl_str::PlSmallStr;
-use polars_utils::unique_id::UniqueId;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::plans::IRStringFunction;
 use crate::plans::ir_traversal::edge_provider::EdgesProvider;
 use crate::plans::ir_traversal::ir_node_key::IRNodeKey;
-use crate::plans::ir_traversal::pullup_traversal::{BasicEdgeProvider, ir_pullup_traversal_rec};
+use crate::plans::ir_traversal::pullup_traversal::ir_pullup_traversal_rec;
 use crate::plans::partitioning::frame::FramePartitioning;
 use crate::plans::{
     AExpr, ExprIR, FunctionIR, HintIR, IR, IRFunctionExpr, Sorted, ToFieldContext,
@@ -151,9 +150,9 @@ pub fn are_keys_sorted_any(
     input_schema: &Schema,
 ) -> Option<Vec<AExprSorted>> {
     let mut sortedness = Vec::with_capacity(keys.len());
-    for (idx, key) in keys.iter().enumerate() {
+    for eir in keys.iter() {
         let s = aexpr_sortedness(
-            expr_arena.get(key.node()),
+            expr_arena.get(eir.node()),
             expr_arena,
             input_schema,
             ir_sorted,
@@ -208,7 +207,7 @@ pub fn pullup_sorted_single<EP: EdgesProvider<FramePartitioning>>(
     current_ir_node: Node,
     ir_arena: &Arena<IR>,
     expr_arena: &Arena<AExpr>,
-    mut edges_provider: &mut EP,
+    edges_provider: &mut EP,
     column_names_map: &mut ScratchMap<PlSmallStr, Option<PlSmallStr>>,
 ) {
     macro_rules! unpack_edges {
@@ -359,7 +358,7 @@ pub fn pullup_sorted_single<EP: EdgesProvider<FramePartitioning>>(
             *edges_provider.get_out_edge_mut(0) = FramePartitioning::from_iter(s);
         },
 
-        IR::Cache { input, id } => {
+        IR::Cache { .. } => {
             let partitioning = edges_provider.get_in_edge_mut(0).clone();
 
             edges_provider
@@ -370,11 +369,11 @@ pub fn pullup_sorted_single<EP: EdgesProvider<FramePartitioning>>(
         IR::GroupBy {
             input: _,
             keys,
-            aggs,
+            aggs: _,
             schema: _,
             maintain_order,
             options,
-            apply,
+            apply: _,
         } => {
             let ([input_partitioning], [out_edge]) = unpack_edges!(2);
 
@@ -426,7 +425,7 @@ pub fn pullup_sorted_single<EP: EdgesProvider<FramePartitioning>>(
         // TODO: Order-maintaining joins
         IR::Join { .. } => {},
 
-        IR::MapFunction { input, function } => match function {
+        IR::MapFunction { input: _, function } => match function {
             FunctionIR::Hint(hint) => match hint {
                 HintIR::Sorted(v) => {
                     *edges_provider.get_out_edge_mut(0) =

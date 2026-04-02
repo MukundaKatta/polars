@@ -1,7 +1,7 @@
 use polars_core::prelude::PlHashMap;
 use polars_error::PolarsResult;
+use polars_utils::UnitVec;
 use polars_utils::arena::{Arena, Node};
-use polars_utils::{UnitVec, unitvec};
 
 use crate::plans::ir_traversal::edge_provider::EdgesProvider;
 use crate::plans::ir_traversal::ir_node_key::IRNodeKey;
@@ -91,10 +91,10 @@ where
     };
 
     for (node, edge) in ir.inputs().zip(edge_provider.in_edges.iter_mut()) {
-        ir_pullup_traversal_rec(node, visitor_fn, ir_arena, expr_arena, cache, cache_all)?;
+        *edge = ir_pullup_traversal_rec(node, visitor_fn, ir_arena, expr_arena, cache, cache_all)?;
     }
 
-    visitor_fn(node, ir_arena, expr_arena, &mut edge_provider);
+    visitor_fn(node, ir_arena, expr_arena, &mut edge_provider)?;
 
     if matches!(ir_arena.get(node), IR::Cache { .. }) || cache_all {
         let existing = cache.insert(key, out_edge.clone());
