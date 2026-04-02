@@ -10,7 +10,8 @@ use slotmap::{SlotMap, new_key_type};
 
 use crate::dsl::{SinkTypeIR, UnionOptions};
 use crate::plans::ir_traversal::{
-    IRNodeEdgeKeys, IRNodeKey, build_ir_traversal_graph, unpack_edges_mut,
+    IREdgeProvivder, IRNodeEdgeKeys, IRNodeKey, IRTraversalGraphEdgeProvider,
+    build_ir_traversal_graph, unpack_edges_mut,
 };
 use crate::plans::simplify_ordering::expr::{ExprOrderSimplifier, ObservableOrders};
 use crate::plans::{IRAggExpr, is_scalar_ae};
@@ -41,7 +42,7 @@ pub fn simplify_and_fetch_orderings(
     PlHashMap<IRNodeKey, IRNodeEdgeKeys<EdgeKey>>,
     SlotMap<EdgeKey, Edge>,
 ) {
-    let (mut ir_nodes_stack, mut ir_node_to_edges_map, mut all_edges_map, cache_updater) =
+    let (mut ir_nodes_stack, mut ir_node_to_edge_keys_map, mut edges_map, cache_updater) =
         build_ir_traversal_graph(roots, ir_arena);
 
     let eos_revisit_cache = &mut PlHashMap::default();
@@ -49,17 +50,24 @@ pub fn simplify_and_fetch_orderings(
     let mut deleted_idxs = vec![];
 
     let mut simplifier = SimplifyIRNodeOrder {
-        ir_node_to_edges_map: &mut ir_node_to_edges_map,
-        all_edges_map: &mut all_edges_map,
-        ir_arena,
         expr_arena,
         eos_revisit_cache,
         ae_nodes_scratch,
     };
 
     for (i, node) in ir_nodes_stack.iter().copied().enumerate() {
-        if simplifier.simplify_ir_node_orders(node) {
-            deleted_idxs.push(i)
+        if simplifier.simplify_ir_node_orders(
+            node,
+            ir_arena,
+            IRTraversalGraphEdgeProvider {
+                ir_node_edge_keys: ir_node_to_edge_keys_map
+                    .get(&IRNodeKey::new(node, ir_arena))
+                    .unwrap(),
+                edges_map: &mut edges_map,
+            },
+        ) {
+            deleted_idxs.push(i);
+            unlink_node(node, ir_arena, &mut ir_node_to_edge_keys_map);
         }
     }
 
@@ -69,18 +77,26 @@ pub fn simplify_and_fetch_orderings(
             continue;
         }
 
-        simplifier.simplify_ir_node_orders(node);
+        if simplifier.simplify_ir_node_orders(
+            node,
+            ir_arena,
+            IRTraversalGraphEdgeProvider {
+                ir_node_edge_keys: ir_node_to_edge_keys_map
+                    .get(&IRNodeKey::new(node, ir_arena))
+                    .unwrap(),
+                edges_map: &mut edges_map,
+            },
+        ) {
+            unlink_node(node, ir_arena, &mut ir_node_to_edge_keys_map);
+        }
     }
 
     cache_updater.update_cache_nodes(ir_arena);
 
-    (ir_node_to_edges_map, all_edges_map)
+    (ir_node_to_edge_keys_map, edges_map)
 }
 
 struct SimplifyIRNodeOrder<'a> {
-    ir_node_to_edges_map: &'a mut PlHashMap<IRNodeKey, IRNodeEdgeKeys<EdgeKey>>,
-    all_edges_map: &'a mut SlotMap<EdgeKey, Edge>,
-    ir_arena: &'a mut Arena<IR>,
     expr_arena: &'a mut Arena<AExpr>,
     eos_revisit_cache: &'a mut PlHashMap<Node, ObservableOrders>,
     ae_nodes_scratch: &'a mut ScratchVec<Node>,
@@ -88,39 +104,17 @@ struct SimplifyIRNodeOrder<'a> {
 
 impl SimplifyIRNodeOrder<'_> {
     /// Returns if the node was deleted.
-    fn simplify_ir_node_orders(&mut self, current_ir_node: Node) -> bool {
+    fn simplify_ir_node_orders(
+        &mut self,
+        current_ir_node: Node,
+        ir_arena: &mut Arena<IR>,
+        mut edges_provider: IRTraversalGraphEdgeProvider<'_, EdgeKey, Edge>,
+    ) -> bool {
         use ObservableOrders as O;
-
-        let current_ir_node_edges = self
-            .ir_node_to_edges_map
-            .get(&IRNodeKey::new(current_ir_node, self.ir_arena))
-            .unwrap();
-
-        let IRNodeEdgeKeys {
-            in_edges,
-            out_edges,
-            out_nodes: _,
-        } = current_ir_node_edges;
-
-        macro_rules! get_edge {
-            ($edge_key:expr) => {
-                self.all_edges_map.get($edge_key).unwrap()
-            };
-        }
-
-        macro_rules! get_edge_mut {
-            ($edge_key:expr) => {
-                self.all_edges_map.get_mut($edge_key).unwrap()
-            };
-        }
 
         macro_rules! unpack_edges {
             ($total:literal) => {
-                unpack_edges_mut::<EdgeKey, Edge, _, _, $total>(
-                    current_ir_node_edges,
-                    self.all_edges_map,
-                )
-                .unwrap()
+                edges_provider.unpack_edges_mut::<_, _, $total>().unwrap()
             };
         }
 
@@ -131,9 +125,9 @@ impl SimplifyIRNodeOrder<'_> {
             }};
         }
 
-        match self.ir_arena.get_mut(current_ir_node) {
+        match ir_arena.get_mut(current_ir_node) {
             IR::Select { .. } | IR::HStack { .. } => {
-                let (exprs, is_hstack) = match self.ir_arena.get_mut(current_ir_node) {
+                let (exprs, is_hstack) = match ir_arena.get_mut(current_ir_node) {
                     IR::Select { expr, .. } => (expr, false),
                     IR::HStack { exprs, schema, .. } => {
                         let v = schema.len() != exprs.len();
@@ -182,8 +176,7 @@ impl SimplifyIRNodeOrder<'_> {
 
                 if out_edge.is_unordered() && slice.is_none() {
                     *in_edge = out_edge.clone();
-                    let input = *input;
-                    return self.unlink_node(current_ir_node, input);
+                    return true;
                 }
 
                 let mut eos = expr_order_simplifier!();
@@ -391,15 +384,16 @@ impl SimplifyIRNodeOrder<'_> {
             },
 
             IR::Union { inputs: _, options } => {
-                assert_eq!(out_edges.len(), 1);
+                assert_eq!(edges_provider.num_out_edges(), 1);
 
-                let out_edge_key = *out_edges.first().unwrap();
+                let out_edge = edges_provider.get_out_edge_mut(0);
 
-                if !options.maintain_order || get_edge!(out_edge_key).is_unordered() {
+                if !options.maintain_order || out_edge.is_unordered() {
                     options.maintain_order = false;
-                    *get_edge_mut!(out_edge_key) = Edge::Unordered;
-                    for k in in_edges.iter() {
-                        *get_edge_mut!(*k) = Edge::Unordered;
+                    *out_edge = Edge::Unordered;
+
+                    for i in 0..edges_provider.num_in_edges() {
+                        *edges_provider.get_in_edge_mut(i) = Edge::Unordered
                     }
                 }
 
@@ -425,7 +419,7 @@ impl SimplifyIRNodeOrder<'_> {
                     let input_left = *input_left;
                     let input_right = *input_right;
 
-                    self.ir_arena.replace(
+                    ir_arena.replace(
                         current_ir_node,
                         IR::Union {
                             inputs: vec![input_left, input_right],
@@ -455,9 +449,11 @@ impl SimplifyIRNodeOrder<'_> {
             },
 
             IR::HConcat { .. } | IR::Slice { .. } | IR::ExtContext { .. } => {
-                if in_edges.iter().all(|k| get_edge!(*k).is_unordered()) {
-                    for k in out_edges.iter() {
-                        *get_edge_mut!(*k) = Edge::Unordered
+                if (0..edges_provider.num_in_edges())
+                    .all(|i| edges_provider.get_in_edge_mut(i).is_unordered())
+                {
+                    for i in 0..edges_provider.num_out_edges() {
+                        *edges_provider.get_out_edge_mut(i) = Edge::Unordered
                     }
                 }
             },
@@ -472,14 +468,16 @@ impl SimplifyIRNodeOrder<'_> {
             },
 
             IR::Cache { .. } => {
-                assert_eq!(in_edges.len(), 1);
+                assert_eq!(edges_provider.num_in_edges(), 1);
 
-                if get_edge!(in_edges[0]).is_unordered() {
-                    for k in out_edges.iter() {
-                        *get_edge_mut!(*k) = Edge::Unordered
+                if edges_provider.get_in_edge_mut(0).is_unordered() {
+                    for i in 0..edges_provider.num_out_edges() {
+                        *edges_provider.get_out_edge_mut(i) = Edge::Unordered
                     }
-                } else if out_edges.iter().all(|k| get_edge!(*k).is_unordered()) {
-                    *get_edge_mut!(in_edges[0]) = Edge::Unordered
+                } else if (0..edges_provider.num_out_edges())
+                    .all(|i| edges_provider.get_in_edge_mut(i).is_unordered())
+                {
+                    *edges_provider.get_in_edge_mut(0) = Edge::Unordered
                 }
             },
 
@@ -514,65 +512,74 @@ impl SimplifyIRNodeOrder<'_> {
 
         false
     }
+}
 
-    fn unlink_node(&mut self, current_ir_node: Node, input_to_current_ir_node: Node) -> bool {
-        let current_ir_node_edges = self
-            .ir_node_to_edges_map
-            .get(&IRNodeKey::new(current_ir_node, self.ir_arena))
-            .unwrap();
+fn unlink_node(
+    current_ir_node: Node,
+    ir_arena: &mut Arena<IR>,
+    ir_node_to_edge_keys_map: &mut PlHashMap<IRNodeKey, IRNodeEdgeKeys<EdgeKey>>,
+) -> bool {
+    let input_to_current_ir_node = {
+        let mut inputs = ir_arena.get(current_ir_node).inputs();
+        let node = inputs.next().unwrap();
+        assert!(inputs.next().is_none());
+        node
+    };
 
-        let IRNodeEdgeKeys {
-            out_nodes,
-            in_edges,
+    let current_ir_node_edges = ir_node_to_edge_keys_map
+        .get(&IRNodeKey::new(current_ir_node, ir_arena))
+        .unwrap();
+
+    let IRNodeEdgeKeys {
+        out_nodes,
+        in_edges,
+        ..
+    } = current_ir_node_edges;
+
+    assert_eq!(out_nodes.len(), 1);
+    assert_eq!(in_edges.len(), 1);
+
+    let current_in_edge_key = in_edges[0];
+
+    let consumer_node = out_nodes[0];
+
+    let mut iter = ir_arena
+        .get_mut(consumer_node)
+        .inputs_mut()
+        .enumerate()
+        .filter(|(_, node)| **node == current_ir_node);
+
+    let (consumer_node_input_idx, node) = iter.next().unwrap();
+    *node = input_to_current_ir_node;
+    assert!(iter.next().is_none());
+    drop(iter);
+
+    let [
+        Some(IRNodeEdgeKeys {
+            in_edges: consumer_node_in_edges,
             ..
-        } = current_ir_node_edges;
+        }),
+        Some(IRNodeEdgeKeys {
+            out_edges: out_edges_of_new_input_node,
+            out_nodes: out_nodes_of_new_input_node,
+            ..
+        }),
+    ] = ir_node_to_edge_keys_map.get_disjoint_mut([
+        &IRNodeKey::new(consumer_node, ir_arena),
+        &IRNodeKey::new(input_to_current_ir_node, ir_arena),
+    ])
+    else {
+        unreachable!()
+    };
 
-        assert_eq!(out_nodes.len(), 1);
-        assert_eq!(in_edges.len(), 1);
+    let out_edge_idx_in_new_input_node = out_edges_of_new_input_node
+        .iter()
+        .position(|k| *k == current_in_edge_key)
+        .unwrap();
 
-        let current_in_edge_key = in_edges[0];
+    out_edges_of_new_input_node[out_edge_idx_in_new_input_node] =
+        consumer_node_in_edges[consumer_node_input_idx];
+    out_nodes_of_new_input_node[out_edge_idx_in_new_input_node] = consumer_node;
 
-        let consumer_node = out_nodes[0];
-
-        let mut iter = self
-            .ir_arena
-            .get_mut(consumer_node)
-            .inputs_mut()
-            .enumerate()
-            .filter(|(_, node)| **node == current_ir_node);
-
-        let (consumer_node_input_idx, node) = iter.next().unwrap();
-        *node = input_to_current_ir_node;
-        assert!(iter.next().is_none());
-        drop(iter);
-
-        let [
-            Some(IRNodeEdgeKeys {
-                in_edges: consumer_node_in_edges,
-                ..
-            }),
-            Some(IRNodeEdgeKeys {
-                out_edges: out_edges_of_new_input_node,
-                out_nodes: out_nodes_of_new_input_node,
-                ..
-            }),
-        ] = self.ir_node_to_edges_map.get_disjoint_mut([
-            &IRNodeKey::new(consumer_node, self.ir_arena),
-            &IRNodeKey::new(input_to_current_ir_node, self.ir_arena),
-        ])
-        else {
-            unreachable!()
-        };
-
-        let out_edge_idx_in_new_input_node = out_edges_of_new_input_node
-            .iter()
-            .position(|k| *k == current_in_edge_key)
-            .unwrap();
-
-        out_edges_of_new_input_node[out_edge_idx_in_new_input_node] =
-            consumer_node_in_edges[consumer_node_input_idx];
-        out_nodes_of_new_input_node[out_edge_idx_in_new_input_node] = consumer_node;
-
-        true
-    }
+    true
 }

@@ -148,3 +148,14 @@ impl OptimizationRule for FusedArithmetic {
         }
     }
 }
+
+fn test(v: &mut Vec<u32>) {
+    let a = v.get_mut(3).unwrap();
+
+    if *a == 6 {
+        *a = 3;
+
+        let v = v.get_mut(1).unwrap();
+        *v = 0;
+    }
+}
