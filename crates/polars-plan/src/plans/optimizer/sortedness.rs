@@ -204,11 +204,11 @@ pub fn is_sorted(root: Node, ir_arena: &Arena<IR>, expr_arena: &Arena<AExpr>) ->
     .unwrap()
 }
 
-pub fn pullup_sorted_single(
+pub fn pullup_sorted_single<EP: EdgesProvider<FramePartitioning>>(
     current_ir_node: Node,
     ir_arena: &Arena<IR>,
     expr_arena: &Arena<AExpr>,
-    edges_provider: &mut BasicEdgeProvider<FramePartitioning>,
+    mut edges_provider: &mut EP,
     column_names_map: &mut ScratchMap<PlSmallStr, Option<PlSmallStr>>,
 ) {
     macro_rules! unpack_edges {
