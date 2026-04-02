@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(all(feature = "strings", feature = "concat_str"))]
 use crate::plans::IRStringFunction;
-use crate::plans::ir_traversal::edge_provider::IREdgeProvider;
+use crate::plans::ir_traversal::edge_provider::EdgesProvider;
 use crate::plans::ir_traversal::pullup_traversal::BasicEdgeProvider;
 use crate::plans::partitioning::frame::FramePartitioning;
 use crate::plans::{

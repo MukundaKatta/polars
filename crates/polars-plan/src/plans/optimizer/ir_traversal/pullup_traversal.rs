@@ -3,7 +3,7 @@ use polars_error::PolarsResult;
 use polars_utils::arena::{Arena, Node};
 use polars_utils::{UnitVec, unitvec};
 
-use crate::plans::ir_traversal::edge_provider::IREdgeProvider;
+use crate::plans::ir_traversal::edge_provider::EdgesProvider;
 use crate::plans::ir_traversal::ir_node_key::IRNodeKey;
 use crate::plans::{AExpr, IR};
 
@@ -12,7 +12,7 @@ pub struct BasicEdgeProvider<'a, Edge> {
     out_edges: &'a mut [Edge],
 }
 
-impl<'provider, Edge> IREdgeProvider<Edge> for BasicEdgeProvider<'provider, Edge> {
+impl<'provider, Edge> EdgesProvider<Edge> for BasicEdgeProvider<'provider, Edge> {
     fn unpack_edges_mut<
         'a,
         const NUM_INPUTS: usize,

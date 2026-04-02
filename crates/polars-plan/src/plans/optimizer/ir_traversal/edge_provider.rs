@@ -7,7 +7,7 @@ use crate::plans::IRRandomMethod;
 use crate::plans::ir_traversal::ir_graph::{IRNodeEdgeKeys, unpack_edges_mut};
 use crate::plans::ir_traversal::ir_node_key::IRNodeKey;
 
-pub trait IREdgeProvider<Edge> {
+pub trait EdgesProvider<Edge> {
     fn unpack_edges_mut<
         'a,
         const NUM_INPUTS: usize,
@@ -57,7 +57,7 @@ where
     pub edges_map: &'a mut SlotMap<EdgeKey, Edge>,
 }
 
-impl<'provider, EdgeKey: slotmap::Key, Edge> IREdgeProvider<Edge>
+impl<'provider, EdgeKey: slotmap::Key, Edge> EdgesProvider<Edge>
     for IRTraversalGraphEdgeProvider<'provider, EdgeKey, Edge>
 {
     fn unpack_edges_mut<
