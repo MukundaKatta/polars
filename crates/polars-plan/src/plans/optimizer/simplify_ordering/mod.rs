@@ -59,7 +59,10 @@ impl Edge {
 
     fn set_unordered(&mut self) {
         match self {
-            Self::Ordered(p) => *self = Self::Unordered(std::mem::take(p)),
+            Self::Ordered(p) => {
+                *self = Self::Unordered(std::mem::take(p));
+                self.unordered_partitioning_correction();
+            },
             Self::Unordered(_) => {},
         }
     }
