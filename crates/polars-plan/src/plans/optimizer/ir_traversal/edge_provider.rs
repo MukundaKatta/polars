@@ -4,7 +4,8 @@ use polars_utils::arena::{Arena, Node};
 use slotmap::SlotMap;
 
 use crate::plans::IRRandomMethod;
-use crate::plans::ir_traversal::{IRNodeEdgeKeys, IRNodeKey, unpack_edges_mut};
+use crate::plans::ir_traversal::ir_graph::{IRNodeEdgeKeys, unpack_edges_mut};
+use crate::plans::ir_traversal::ir_node_key::IRNodeKey;
 
 pub trait IREdgeProvivder<Edge> {
     fn unpack_edges_mut<

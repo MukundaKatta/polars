@@ -9,10 +9,11 @@ use polars_utils::scratch_vec::ScratchVec;
 use slotmap::{SlotMap, new_key_type};
 
 use crate::dsl::{SinkTypeIR, UnionOptions};
-use crate::plans::ir_traversal::{
-    IREdgeProvivder, IRNodeEdgeKeys, IRNodeKey, IRTraversalGraphEdgeProvider,
-    build_ir_traversal_graph, unpack_edges_mut,
+use crate::plans::ir_traversal::edge_provider::{IREdgeProvivder, IRTraversalGraphEdgeProvider};
+use crate::plans::ir_traversal::ir_graph::{
+    IRNodeEdgeKeys, build_ir_traversal_graph, unpack_edges_mut,
 };
+use crate::plans::ir_traversal::ir_node_key::IRNodeKey;
 use crate::plans::simplify_ordering::expr::{ExprOrderSimplifier, ObservableOrders};
 use crate::plans::{IRAggExpr, is_scalar_ae};
 use crate::prelude::{AExpr, IR};
