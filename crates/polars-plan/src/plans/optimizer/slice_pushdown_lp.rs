@@ -193,17 +193,31 @@ impl SlicePushDown {
     ) -> PolarsResult<IR> {
         let inputs = lp.get_inputs();
 
-        let new_inputs = inputs
-            .into_iter()
-            .map(|node| {
-                // No state, so we do not push down the slice here.
-                let state = None;
-                let alp = self.pushdown(node, state, lp_arena, expr_arena)?;
-                lp_arena.replace(node, alp);
-                Ok(node)
-            })
-            .collect::<PolarsResult<UnitVec<_>>>()?;
-        let lp = lp.with_inputs(new_inputs);
+        let lp = if let IR::Cache { id, .. } = &lp
+            && let Some(optimized) = self.optimized_caches.get(id)
+        {
+            panic!("DOUBLE HIT");
+            optimized.clone()
+        } else {
+            let new_inputs = inputs
+                .into_iter()
+                .map(|node| {
+                    // No state, so we do not push down the slice here.
+                    let state = None;
+                    let alp = self.pushdown(node, state, lp_arena, expr_arena)?;
+                    lp_arena.replace(node, alp);
+                    Ok(node)
+                })
+                .collect::<PolarsResult<UnitVec<_>>>()?;
+            let lp = lp.with_inputs(new_inputs);
+
+            if let IR::Cache { id, .. } = &lp {
+                let existing = self.optimized_caches.insert(id.clone(), lp.clone());
+                assert!(existing.is_none());
+            }
+
+            lp
+        };
 
         self.no_pushdown_finish_opt(lp, state, lp_arena)
     }
@@ -242,22 +256,13 @@ impl SlicePushDown {
         use IR::*;
 
         // Don't take this, the node can be referenced multiple times in the tree.
-        if let IR::Cache { id, .. } = lp_arena.get(ir_node) {
-            let id = id.clone();
-
-            if !self.optimized_caches.contains_key(&id) {
-                let optimized_cache_ir = self.no_pushdown_restart_opt(
-                    lp_arena.get(ir_node).clone(),
-                    state,
-                    lp_arena,
-                    expr_arena,
-                )?;
-                self.optimized_caches.insert(id.clone(), optimized_cache_ir);
-            } else {
-                panic!("DOUBLE HIT"); //NXS: Remove
-            }
-
-            return Ok(self.optimized_caches.get(&id).unwrap().clone());
+        if let IR::Cache { .. } = lp_arena.get(ir_node) {
+            return self.no_pushdown_restart_opt(
+                lp_arena.get(ir_node).clone(),
+                state,
+                lp_arena,
+                expr_arena,
+            );
         }
 
         match (lp_arena.take(ir_node), state) {

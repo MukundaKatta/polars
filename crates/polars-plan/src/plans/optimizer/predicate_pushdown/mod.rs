@@ -19,9 +19,13 @@ use crate::utils::{check_input_node, has_aexpr};
 
 /// The struct is wrapped in a mod to prevent direct member access of `nodes_scratch`
 mod inner {
+    use polars_core::prelude::PlHashMap;
     use polars_utils::arena::Node;
     use polars_utils::idx_vec::UnitVec;
+    use polars_utils::unique_id::UniqueId;
     use polars_utils::unitvec;
+
+    use crate::plans::IR;
 
     pub struct PredicatePushDown {
         // How many cache nodes a predicate may be pushed down to.
@@ -31,6 +35,7 @@ mod inner {
         pub(super) new_streaming: bool,
         // Controls pushing filters past fallible projections
         pub(super) maintain_errors: bool,
+        pub(super) optimized_caches: PlHashMap<UniqueId, IR>,
     }
 
     impl PredicatePushDown {
@@ -40,6 +45,7 @@ mod inner {
                 nodes_scratch: unitvec![],
                 new_streaming,
                 maintain_errors,
+                optimized_caches: PlHashMap::default(),
             }
         }
 
