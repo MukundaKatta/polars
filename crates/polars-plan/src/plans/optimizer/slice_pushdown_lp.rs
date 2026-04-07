@@ -6,14 +6,19 @@ use recursive::recursive;
 use crate::prelude::*;
 
 mod inner {
+    use polars_core::prelude::PlHashMap;
     use polars_utils::arena::Node;
     use polars_utils::idx_vec::UnitVec;
+    use polars_utils::unique_id::UniqueId;
     use polars_utils::unitvec;
+
+    use crate::plans::IR;
 
     pub struct SlicePushDown {
         scratch: UnitVec<Node>,
         pub(super) maintain_errors: bool,
         pub(crate) slice_node_in_optimized_plan: bool,
+        pub(super) optimized_caches: PlHashMap<UniqueId, IR>,
     }
 
     impl SlicePushDown {
@@ -26,6 +31,7 @@ mod inner {
                 // the new-streaming engine still may not error due to early-stopping.
                 maintain_errors: false,
                 slice_node_in_optimized_plan: false,
+                optimized_caches: PlHashMap::default(),
             }
         }
 
@@ -236,13 +242,22 @@ impl SlicePushDown {
         use IR::*;
 
         // Don't take this, the node can be referenced multiple times in the tree.
-        if let IR::Cache { .. } = lp_arena.get(ir_node) {
-            return self.no_pushdown_restart_opt(
-                lp_arena.get(ir_node).clone(),
-                state,
-                lp_arena,
-                expr_arena,
-            );
+        if let IR::Cache { id, .. } = lp_arena.get(ir_node) {
+            let id = id.clone();
+
+            if !self.optimized_caches.contains_key(&id) {
+                let optimized_cache_ir = self.no_pushdown_restart_opt(
+                    lp_arena.get(ir_node).clone(),
+                    state,
+                    lp_arena,
+                    expr_arena,
+                )?;
+                self.optimized_caches.insert(id.clone(), optimized_cache_ir);
+            } else {
+                panic!("DOUBLE HIT"); //NXS: Remove
+            }
+
+            return Ok(self.optimized_caches.get(&id).unwrap().clone());
         }
 
         match (lp_arena.take(ir_node), state) {
@@ -676,6 +691,7 @@ impl SlicePushDown {
             | m @ (GroupBy { .. }, _)
             | m @ (Join { .. }, _) => {
                 let (lp, state) = m;
+                debug_assert!(!matches!(lp, IR::Cache { .. }));
                 self.no_pushdown_restart_opt(lp, state, lp_arena, expr_arena)
             },
             #[cfg(feature = "pivot")]
