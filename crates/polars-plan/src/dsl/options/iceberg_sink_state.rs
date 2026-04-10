@@ -11,9 +11,9 @@ use polars_utils::python_function::PythonObject;
 #[cfg_attr(feature = "python", derive(pyo3::IntoPyObject, pyo3::FromPyObject))]
 pub struct IcebergSinkState {
     /// Python class module
-    pub catalog_class_module: PlSmallStr,
+    pub py_catalog_class_module: PlSmallStr,
     /// Python class qualname
-    pub catalog_class_qualname: PlSmallStr,
+    pub py_catalog_class_qualname: PlSmallStr,
 
     pub catalog_name: PlSmallStr,
     pub catalog_properties: BTreeMap<PlSmallStr, PlSmallStr>,
@@ -25,10 +25,10 @@ pub struct IcebergSinkState {
     pub sink_uuid_str: String,
 
     #[cfg(feature = "python")]
-    table_: Option<PythonObject>, // NoPickleOption[pyiceberg.table.Table]
+    pub table_: Option<PythonObject>, // NoPickleOption[pyiceberg.table.Table]
 
     #[cfg(feature = "python")]
-    commit_result_df: Option<PythonObject>, // NoPickleOption[pl.DataFrame]
+    pub commit_result_df: Option<PythonObject>, // NoPickleOption[pl.DataFrame]
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Eq, Hash)]

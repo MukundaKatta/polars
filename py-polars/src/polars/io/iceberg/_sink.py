@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING, ClassVar, Literal
 
-from polars._plr import PyLazyFrame
 from polars._utils.logging import eprint
 from polars._utils.wrap import wrap_ldf
 from polars.io.cloud._utils import NoPickleOption
@@ -27,13 +26,14 @@ if TYPE_CHECKING:
     import pyiceberg.table
 
     import polars as pl
+    from polars._plr import PyLazyFrame
     from polars._typing import StorageOptionsDict
 
 
 @dataclass(kw_only=True)
 class IcebergSinkState:
-    catalog_class_module: str
-    catalog_class_qualname: str
+    py_catalog_class_module: str
+    py_catalog_class_qualname: str
 
     catalog_name: str
     catalog_properties: dict[str, str]
@@ -55,14 +55,6 @@ class IcebergSinkState:
         catalog: pyiceberg.catalog.Catalog | IcebergCatalogConfig | None = None,
         storage_options: StorageOptionsDict | None = None,
     ) -> IcebergSinkState:
-        table: pyiceberg.table.Table | None = None
-
-        if importlib.util.find_spec("pyiceberg.table") is not None:
-            from pyiceberg.table import Table
-
-            if isinstance(target, Table):
-                table = target
-
         catalog_config = (
             (
                 IcebergCatalogConfig._from_api_parameter_or_environment_default(
@@ -73,9 +65,9 @@ class IcebergSinkState:
             if isinstance(target, str)
             else (
                 IcebergCatalogConfig(
-                    class_=type(table.catalog),
-                    name=table.catalog.name,
-                    properties=table.catalog.properties,
+                    class_=type(target.catalog),
+                    name=target.catalog.name,
+                    properties=target.catalog.properties,
                 )
             )
         )
@@ -85,27 +77,27 @@ class IcebergSinkState:
         if catalog_config.class_ is NoopCatalog:
             msg = (
                 "cannot sink to static Iceberg table: "
-                f"{type(table) = }, {type(table.catalog) = }"
+                f"{type(target) = }, {getattr(target, 'catalog', None) = }"
             )
             raise TypeError(msg)
 
         return IcebergSinkState(
-            catalog_class_module=catalog_config.class_.__module__,
-            catalog_class_qualname=catalog_config.class_.__qualname__,
+            py_catalog_class_module=catalog_config.class_.__module__,
+            py_catalog_class_qualname=catalog_config.class_.__qualname__,
             catalog_name=catalog_config.name,
             catalog_properties=catalog_config.properties,
-            table_name=target if isinstance(target, str) else ".".join(table.name()),
+            table_name=target if isinstance(target, str) else ".".join(target.name()),
             mode=mode,
             iceberg_storage_properties=storage_options or {},
             sink_uuid_str=gen_uuid_v7().hex(),
-            table_=NoPickleOption(table),
+            table_=NoPickleOption(target if not isinstance(target, str) else None),
             commit_result_df=NoPickleOption(),
         )
 
     def table(self) -> pyiceberg.table.Table:
         if self.table_.get() is None:
-            module = importlib.import_module(self.catalog_class_module)
-            qualname_split = self.catalog_class_qualname.split(".")
+            module = importlib.import_module(self.py_catalog_class_module)
+            qualname_split = self.py_catalog_class_qualname.split(".")
 
             catalog_class: type[pyiceberg.catalog.Catalog] = getattr(
                 module, qualname_split[0]
@@ -259,7 +251,7 @@ class IcebergSinkState:
                 f"IcebergSinkState[commit]: finished, total elapsed time: {total_elapsed:.3f}s"
             )
 
-        return self.commit_result_df.get()
+        return self.commit_result_df.get()  # type: ignore[return-value]
 
     def output_base_path(self) -> str:
         from pyiceberg.table import TableProperties

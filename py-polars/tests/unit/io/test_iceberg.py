@@ -517,8 +517,9 @@ def test_sink_iceberg_pickle(tmp_path: Path) -> None:
     sink_state = IcebergSinkState.new(tbl)
     sink_q = sink_state.attach_sink(pl.LazyFrame({"a": 1}))
     sink_q.collect()
-    assert sink_state.commit_result_df.get() is not None
-    new_md_path = sink_state.commit_result_df.get().item(0, "metadata_path")
+    rdf = sink_state.commit_result_df.get()
+    assert rdf is not None
+    new_md_path = rdf.item(0, "metadata_path")
 
     tbl = sink_state.table()
 

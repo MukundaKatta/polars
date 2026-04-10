@@ -3296,7 +3296,7 @@ naive plan: (run LazyFrame.explain(optimized=True) to see the optimized plan)
 
         sink_state.attach_sink(self).collect(engine="streaming")
 
-        return sink_state.commit_result_df.get()
+        return sink_state.commit_result_df.get()  # type: ignore[return-value]
 
     @overload
     def sink_ipc(
