@@ -3287,16 +3287,16 @@ naive plan: (run LazyFrame.explain(optimized=True) to see the optimized plan)
         """
         from polars.io.iceberg._sink import IcebergSinkState
 
-        sink_state = IcebergSinkState(
-            target=target,
-            catalog=catalog,
+        sink_state = IcebergSinkState.new(
+            target,
             mode=mode,
+            catalog=catalog,
             storage_options=storage_options,
         )
 
         sink_state.attach_sink(self).collect(engine="streaming")
 
-        return sink_state.commit()
+        return sink_state.commit_result_df.get()
 
     @overload
     def sink_ipc(
