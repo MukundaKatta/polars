@@ -3162,7 +3162,7 @@ def test_scan_csv_missing_columns_27268() -> None:
     files[0].seek(0)
     files[1].seek(0)
 
-    df = pl.scan_csv(files, missing_columns="insert").collect()
+    df = pl.scan_csv(files, missing_columns="insert").collect()  # type: ignore[arg-type]
 
     assert_frame_equal(
         df,
