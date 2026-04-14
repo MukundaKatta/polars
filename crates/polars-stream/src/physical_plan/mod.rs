@@ -85,15 +85,16 @@ mod phys_node {
 
     #[derive(Clone, Debug)]
     enum OutputSchema {
-        One(Arc<Schema>),
+        /// Same output schema across all ports
+        Shared(Arc<Schema>),
         #[expect(unused)]
-        Many(Vec<Arc<Schema>>),
+        PerPort(Vec<Arc<Schema>>),
     }
 
     impl PhysNode {
         pub fn new(output_schema: Arc<Schema>, kind: PhysNodeKind) -> Self {
             Self {
-                output_schema: OutputSchema::One(output_schema),
+                output_schema: OutputSchema::Shared(output_schema),
                 kind,
             }
         }
@@ -102,8 +103,8 @@ mod phys_node {
             use OutputSchema::*;
 
             match &self.output_schema {
-                One(schema) => schema,
-                Many(v) => &v[idx],
+                Shared(schema) => schema,
+                PerPort(v) => &v[idx],
             }
         }
 
@@ -111,8 +112,8 @@ mod phys_node {
             use OutputSchema::*;
 
             match &mut self.output_schema {
-                One(schema) => schema,
-                Many(v) => &mut v[idx],
+                Shared(schema) => schema,
+                PerPort(v) => &mut v[idx],
             }
         }
 
