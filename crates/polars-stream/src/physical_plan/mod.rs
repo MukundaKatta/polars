@@ -93,20 +93,10 @@ mod phys_node {
         }
 
         pub fn output_schema(&self, idx: usize) -> &Arc<Schema> {
-            &self.output_schema[if self.output_schema.len() == 1 {
-                0
-            } else {
-                idx
-            }]
+            &self.output_schema[idx]
         }
 
         pub fn output_schema_mut(&mut self, idx: usize) -> &mut Arc<Schema> {
-            let idx = if self.output_schema.len() == 1 {
-                0
-            } else {
-                idx
-            };
-
             &mut self.output_schema[idx]
         }
 
