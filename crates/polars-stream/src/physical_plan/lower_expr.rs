@@ -467,7 +467,7 @@ fn build_fallback_node_with_ctx(
             create_physical_expr(
                 expr,
                 ctx.expr_arena,
-                &ctx.phys_sm[input_stream.node].output_schema(input_stream.port),
+                ctx.phys_sm[input_stream.node].output_schema(input_stream.port),
                 &mut conv_state,
             )
         })
@@ -1327,12 +1327,12 @@ fn lower_exprs_with_ctx(
 
                 let base_expr_ir = &inner_exprs[0];
                 let base_dtype = base_expr_ir.dtype(
-                    &ctx.phys_sm[input.node].output_schema(input.port),
+                    ctx.phys_sm[input.node].output_schema(input.port),
                     ctx.expr_arena,
                 )?;
                 let offset_expr_ir = &inner_exprs[1];
                 let offset_dtype = offset_expr_ir.dtype(
-                    &ctx.phys_sm[input.node].output_schema(input.port),
+                    ctx.phys_sm[input.node].output_schema(input.port),
                     ctx.expr_arena,
                 )?;
 
