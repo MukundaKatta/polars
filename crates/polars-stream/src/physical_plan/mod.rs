@@ -70,16 +70,24 @@ impl PhysNodeKey {
 /// acyclic graph of operations that can run on the streaming engine.
 #[derive(Clone, Debug)]
 pub struct PhysNode {
-    output_schema: Arc<Schema>,
+    output_schema: UnitVec<Arc<Schema>>,
     kind: PhysNodeKind,
 }
 
 impl PhysNode {
     pub fn new(output_schema: Arc<Schema>, kind: PhysNodeKind) -> Self {
         Self {
-            output_schema,
+            output_schema: unitvec![output_schema],
             kind,
         }
+    }
+
+    fn output_schema(&self, idx: usize) -> &Arc<Schema> {
+        &self.output_schema[if self.output_schema.len() == 1 {
+            0
+        } else {
+            idx
+        }]
     }
 
     pub fn kind(&self) -> &PhysNodeKind {
