@@ -410,7 +410,7 @@ pub fn lower_ir(
                             phys_sm
                                 .get(phys_input.node)
                                 .unwrap()
-                                .output_schema(0)
+                                .output_schema(phys_input.port)
                                 .as_ref(),
                             0,
                         )
@@ -434,7 +434,7 @@ pub fn lower_ir(
                             phys_sm
                                 .get(phys_input.node)
                                 .unwrap()
-                                .output_schema(0)
+                                .output_schema(phys_input.port)
                                 .as_ref(),
                             0,
                         )
