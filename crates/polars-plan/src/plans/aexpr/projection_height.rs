@@ -96,7 +96,7 @@ pub fn aexpr_projection_height(
             h
         },
 
-        SortBy { .. } => input_heights[0],
+        SortBy { .. } => H::zipped_projection_height(input_heights.iter().copied()),
 
         Gather { returns_scalar, .. } => {
             if *returns_scalar {
