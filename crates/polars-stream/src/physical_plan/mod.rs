@@ -70,7 +70,6 @@ mod phys_node {
     use std::sync::Arc;
 
     use polars_core::schema::Schema;
-    use polars_utils::{UnitVec, unitvec};
 
     use crate::PhysNodeKind;
 
@@ -80,24 +79,41 @@ mod phys_node {
     /// acyclic graph of operations that can run on the streaming engine.
     #[derive(Clone, Debug)]
     pub struct PhysNode {
-        output_schema: UnitVec<Arc<Schema>>,
+        output_schema: OutputSchema,
         pub(super) kind: PhysNodeKind,
+    }
+
+    #[derive(Clone, Debug)]
+    enum OutputSchema {
+        One(Arc<Schema>),
+        #[expect(unused)]
+        Many(Vec<Arc<Schema>>),
     }
 
     impl PhysNode {
         pub fn new(output_schema: Arc<Schema>, kind: PhysNodeKind) -> Self {
             Self {
-                output_schema: unitvec![output_schema],
+                output_schema: OutputSchema::One(output_schema),
                 kind,
             }
         }
 
         pub fn output_schema(&self, idx: usize) -> &Arc<Schema> {
-            &self.output_schema[idx]
+            use OutputSchema::*;
+
+            match &self.output_schema {
+                One(schema) => schema,
+                Many(v) => &v[idx],
+            }
         }
 
         pub fn output_schema_mut(&mut self, idx: usize) -> &mut Arc<Schema> {
-            &mut self.output_schema[idx]
+            use OutputSchema::*;
+
+            match &mut self.output_schema {
+                One(schema) => schema,
+                Many(v) => &mut v[idx],
+            }
         }
 
         pub fn kind(&self) -> &PhysNodeKind {
