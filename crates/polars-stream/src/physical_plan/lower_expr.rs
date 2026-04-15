@@ -2873,7 +2873,7 @@ pub fn build_length_preserving_select_stream(
         unreachable!()
     };
     assert!(selectors.pop().unwrap().output_name() == &tmp_name);
-    let out_schema = &mut phys_sm[out_stream.node].output_schema_mut(out_stream.port);
+    let out_schema = phys_sm[out_stream.node].output_schema_mut(out_stream.port);
     let out_schema = Arc::make_mut(out_schema);
     out_schema.shift_remove(tmp_name.as_ref()).unwrap();
     Ok(out_stream)
