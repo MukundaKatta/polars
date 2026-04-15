@@ -99,21 +99,21 @@ mod phys_node {
             }
         }
 
-        pub fn output_schema(&self, idx: usize) -> &Arc<Schema> {
+        pub fn output_schema(&self, port_idx: usize) -> &Arc<Schema> {
             use OutputSchema::*;
 
             match &self.output_schema {
                 Shared(schema) => schema,
-                PerPort(v) => &v[idx],
+                PerPort(v) => &v[port_idx],
             }
         }
 
-        pub fn output_schema_mut(&mut self, idx: usize) -> &mut Arc<Schema> {
+        pub fn output_schema_mut(&mut self, port_idx: usize) -> &mut Arc<Schema> {
             use OutputSchema::*;
 
             match &mut self.output_schema {
                 Shared(schema) => schema,
-                PerPort(v) => &mut v[idx],
+                PerPort(v) => &mut v[port_idx],
             }
         }
 
