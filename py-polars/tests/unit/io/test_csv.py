@@ -534,6 +534,25 @@ def test_read_csv_encoding(chunk_override: None, tmp_path: Path) -> None:
 
 @pytest.mark.may_fail_auto_streaming  # read->scan_csv dispatch
 @pytest.mark.write_disk
+def test_read_csv_encoding_preserves_crlf_with_lf_eol(
+    chunk_override: None, tmp_path: Path
+) -> None:
+    csv = "name,value\r\ncafé,1\r\nniño,2\r\n"
+    bts = csv.encode("windows-1252")
+
+    file_path = tmp_path / "encoding_crlf.csv"
+    file_path.write_bytes(bts)
+
+    expected = pl.DataFrame({"name": ["café", "niño"], "value": [1, 2]})
+    for file in [file_path, str(file_path), bts, io.BytesIO(bts)]:
+        assert_frame_equal(
+            pl.read_csv(file, encoding="windows-1252", eol_char="\n"),  # type: ignore[arg-type]
+            expected,
+        )
+
+
+@pytest.mark.may_fail_auto_streaming  # read->scan_csv dispatch
+@pytest.mark.write_disk
 def test_read_csv_encoding_lossy(chunk_override: None, tmp_path: Path) -> None:
     tmp_path.mkdir(exist_ok=True)
 
